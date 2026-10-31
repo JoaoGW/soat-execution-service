@@ -1,14 +1,22 @@
 # Execution Service — Fase 4
 
-Esqueleto em desenvolvimento. Este repositório ainda não implementa o serviço
-de execução nem está pronto para receber tráfego ou efetuar deploy.
+Serviço em desenvolvimento; ainda não está pronto para receber tráfego ou
+para deploy. As funções de domínio calculam reserva, consumo e liberação de
+estoque, agregando quantidades por SKU e limitando a reserva a 20 SKUs.
 
-As funções de domínio calculam reserva, consumo e liberação de estoque, com
-agregação por SKU e limite de 20 SKUs. Elas não fazem persistência: a atomicidade
-em Cosmos, concorrência por ETag, inbox/outbox e impedimento de trabalho após
-cancelamento ainda precisam ser implementados e testados em ambiente real.
+O adapter de reserva prepara um batch transacional do Cosmos na partição da
+filial, com ETags para concorrência e gravação de estoque, reserva, operação,
+inbox e outbox. Repetições não duplicam a reserva. Existe um bloqueio durável
+para impedir reserva posterior ao cancelamento; esse bloqueio por si só não
+comprova que o trabalho físico não começou e não autoriza estorno ou liberação.
+Os testes atuais usam uma simulação em memória e não comprovam o comportamento
+real de atomicidade, concorrência ou limites do Cosmos. O adapter ainda não está
+conectado a um consumidor ou ao runtime do serviço.
 
-Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov`.
-Pendentes: Cosmos e identidade de dados, catálogo, diagnóstico, fila/reparo,
-APIs e autorização, Service Bus, Sonar, deploy automatizado, observabilidade e
-testes distribuídos.
+Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
+`npm run test:contracts`.
+
+Pendentes: validar Cosmos e identidade com infraestrutura real, integrar
+Service Bus e outbox, implementar cancelamento seguro e reconciliação, catálogo,
+diagnóstico, fila/reparo, APIs e autorização, Sonar, deploy automatizado,
+observabilidade e testes distribuídos.
