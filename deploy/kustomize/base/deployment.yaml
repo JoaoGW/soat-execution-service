@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soat-execution-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: soat-execution-service
+  template:
+    metadata:
+      labels:
+        app: soat-execution-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: soat-execution-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api
+          image: ghcr.io/joaogw/soat-execution-service:sha-not-set
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: soat-execution-service
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
