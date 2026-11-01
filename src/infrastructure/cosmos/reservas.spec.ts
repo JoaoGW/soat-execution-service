@@ -1,5 +1,6 @@
 import { Container, OperationInput } from '@azure/cosmos';
 import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CosmosReservationStore, ReservePartsCommand } from './reservas';
@@ -59,6 +60,7 @@ describe('CosmosReservationStore', () => {
     expect(fake.list('outbox:')).toHaveLength(1);
     const dir = resolve(process.cwd(), 'docs/contracts/messages');
     const ajv = new Ajv();
+    addFormats(ajv);
     ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
     const schema = JSON.parse(readFileSync(resolve(dir, 'execution.parts-reserved.v1.schema.json'), 'utf8'));
     expect(ajv.validate(schema, fake.list('outbox:')[0].payload)).toBe(true);
