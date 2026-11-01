@@ -36,6 +36,12 @@ describe('ReserveCommandConsumer', () => {
     await consumer.process({ ...message, body: { ...fixture, data: { ...fixture.data, messageId: 'forjado' } } }, broker);
     expect(store.reserve).toHaveBeenCalledWith(expect.objectContaining({ messageId: fixture.messageId }));
   });
+  it('confirma rejeição de negócio depois do resultado durável', async () => {
+    store.reserve.mockResolvedValue({ reservationId: 'r1', reason: 'INSUFFICIENT_STOCK' });
+    await consumer.process(message, broker);
+    expect(receiver.completeMessage).toHaveBeenCalledWith(message);
+    expect(receiver.abandonMessage).not.toHaveBeenCalled();
+  });
   it('abandona sem confirmar em caso de falha da reserva', async () => {
     store.reserve.mockRejectedValue(new Error('falha'));
     await consumer.process(message, broker);

@@ -11,7 +11,9 @@ export interface ReservePartsCommand {
 type Stored<T> = { value: T; etag: string };
 type Gate = { id: string; filialId: string; cancelled: boolean };
 type StockDocument = Stock & { id: string; filialId: string };
-type OperationDocument = { id: string; filialId: string; hash: string; reservationId: string };
+type RejectionReason = 'EXPIRED' | 'INSUFFICIENT_STOCK';
+type ReservationResult = { reservationId: string; reason?: RejectionReason };
+type OperationDocument = { id: string; filialId: string; hash: string; reservationId: string; reason?: RejectionReason };
 type InboxDocument = { id: string; filialId: string; operationId: string; hash: string };
 
 /** One branch is one Cosmos logical partition; never mix branches in a batch. */
@@ -43,7 +45,7 @@ export class CosmosReservationStore {
     }
   }
 
-  async reserve(command: ReservePartsCommand, now = new Date()): Promise<{ reservationId: string }> {
+  async reserve(command: ReservePartsCommand, now = new Date()): Promise<ReservationResult> {
     if (!Array.isArray(command.items)) throw new Error('Comando inválido');
     const ids = [command.messageId, command.operationId, command.osId, command.sagaId, command.quoteId, command.reservationId, ...command.items.map((item) => item.sku)];
     if (ids.some((id) => typeof id !== 'string' || !/^[a-z0-9_-]{1,128}$/i.test(id)) || !command.filialId || !command.correlationId ||
@@ -63,10 +65,22 @@ export class CosmosReservationStore {
           const operation: OperationInput = { operationType: 'Create', resourceBody: { id: inboxId, filialId: command.filialId, operationId: command.operationId, hash } };
           if (!await this.commit([operation], command.filialId)) continue;
         }
-        return { reservationId: previous.value.reservationId };
+        return { reservationId: previous.value.reservationId, ...(previous.value.reason ? { reason: previous.value.reason } : {}) };
       }
       if (inbox) throw new Error('Mensagem sem operação correspondente');
-      if (Date.parse(command.deadline) <= now.getTime()) throw new Error('Prazo de reserva expirado');
+      const reject = async (reason: RejectionReason): Promise<boolean> => {
+        const messageId = randomUUID();
+        const event = { messageId, type: 'execution.parts-reservation-failed.v1', schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-execution-service', aggregateType: 'reservation', aggregateId: command.reservationId, aggregateVersion: 1, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, correlationId: command.correlationId, causationId: command.messageId, operationId: command.operationId, ...(command.traceparent ? { traceparent: command.traceparent } : {}), ...(command.tracestate ? { tracestate: command.tracestate } : {}), data: { quoteId: command.quoteId, quoteVersion: command.quoteVersion, reservationId: command.reservationId, reason } };
+        return this.commit([
+          { operationType: 'Create', resourceBody: { id: operationId, filialId: command.filialId, hash, reservationId: command.reservationId, reason } },
+          { operationType: 'Create', resourceBody: { id: inboxId, filialId: command.filialId, operationId: command.operationId, hash } },
+          { operationType: 'Create', resourceBody: { id: `outbox:${messageId}`, filialId: command.filialId, messageId, status: 'PENDING', payload: event, createdAt: now.toISOString() } },
+        ], command.filialId);
+      };
+      if (Date.parse(command.deadline) <= now.getTime()) {
+        if (await reject('EXPIRED')) return { reservationId: command.reservationId, reason: 'EXPIRED' };
+        continue;
+      }
       const gate = await this.read<Gate>(gateId, command.filialId);
       if (gate?.value.cancelled) throw new Error('Saga cancelada');
       const reservationId = `reservation:${command.osId}`;
@@ -74,9 +88,15 @@ export class CosmosReservationStore {
       const skus = [...new Set(command.items.map((item) => item.sku))];
       if (skus.length > 20) throw new Error('Máximo de 20 SKUs');
       const stock = await Promise.all(skus.map((sku) => this.read<StockDocument>(`stock:${sku}`, command.filialId)));
-      if (stock.some((item) => !item)) throw new Error('Estoque insuficiente');
-      const entries = stock as Stored<StockDocument>[];
-      const next = reserve(command.reservationId, command.items, entries.map((item) => item.value));
+      const entries = stock.filter((item): item is Stored<StockDocument> => item !== null);
+      let next: ReturnType<typeof reserve>;
+      try {
+        next = reserve(command.reservationId, command.items, entries.map((item) => item.value));
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Estoque insuficiente') throw error;
+        if (await reject('INSUFFICIENT_STOCK')) return { reservationId: command.reservationId, reason: 'INSUFFICIENT_STOCK' };
+        continue;
+      }
       const messageId = randomUUID();
       const eventType = 'execution.parts-reserved.v1';
       const event = { messageId, type: eventType, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-execution-service', aggregateType: 'reservation', aggregateId: command.reservationId, aggregateVersion: 1, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, correlationId: command.correlationId, causationId: command.messageId, operationId: command.operationId, ...(command.traceparent ? { traceparent: command.traceparent } : {}), ...(command.tracestate ? { tracestate: command.tracestate } : {}), data: { quoteId: command.quoteId, quoteVersion: command.quoteVersion, reservationId: command.reservationId, deadline: command.deadline, items: next.reservation.items } };

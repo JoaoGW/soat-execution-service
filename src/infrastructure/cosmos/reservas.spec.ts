@@ -96,18 +96,37 @@ describe('CosmosReservationStore', () => {
     fake.conflicts = 1;
     const other = { ...base, messageId: 'm2', operationId: 'op2', osId: 'os2', sagaId: 's2', reservationId: 'r2' };
     const results = await Promise.allSettled([store.reserve(base, now), store.reserve(other, now)]);
-    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'fulfilled' && !result.value.reason)).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'fulfilled' && result.value.reason === 'INSUFFICIENT_STOCK')).toHaveLength(1);
     expect(fake.get('stock:p1')).toMatchObject({ reserved: 7 });
-    expect(fake.list('outbox:')).toHaveLength(1);
+    expect(fake.list('outbox:')).toHaveLength(2);
   });
   it('rejeita entradas inválidas, prazos vencidos e estoque inexistente', async () => {
     await expect(store.reserve({ ...base, osId: 'inválido/' }, now)).rejects.toThrow('Comando inválido');
     await expect(store.reserve({ ...base, quoteVersion: 0 }, now)).rejects.toThrow('Comando inválido');
     await expect(store.reserve({ ...base, deadline: 'invalid' }, now)).rejects.toThrow('Comando inválido');
-    await expect(store.reserve(base, new Date('2040-01-01'))).rejects.toThrow('expirado');
-    await expect(store.reserve({ ...base, items: [{ sku: 'missing', quantity: 1 }] }, now)).rejects.toThrow('Estoque insuficiente');
+    await expect(store.reserve(base, new Date('2040-01-01'))).resolves.toMatchObject({ reason: 'EXPIRED' });
+    await expect(store.reserve({ ...base, messageId: 'missing', operationId: 'missing', items: [{ sku: 'missing', quantity: 1 }] }, now)).resolves.toMatchObject({ reason: 'INSUFFICIENT_STOCK' });
     await expect(store.writeCancellationFence('invalid/', 'f1')).rejects.toThrow('Cancelamento inválido');
+  });
+  it('persiste falha de estoque uma vez, valida evento e mantém resultado após reposição', async () => {
+    const command = { ...base, items: [{ sku: 'p1', quantity: 11 }] };
+    await expect(store.reserve(command, now)).resolves.toMatchObject({ reason: 'INSUFFICIENT_STOCK' });
+    fake.seed({ id: 'stock:p1', filialId: 'f1', sku: 'p1', balance: 20, reserved: 0 });
+    await expect(store.reserve({ ...command, messageId: 'retry' }, now)).resolves.toMatchObject({ reason: 'INSUFFICIENT_STOCK' });
+    expect(fake.get('stock:p1')).toMatchObject({ reserved: 0 });
+    expect(fake.get('inbox:reserve:retry')).toBeDefined();
+    expect(fake.list('outbox:')).toHaveLength(1);
+    const dir = resolve(process.cwd(), 'docs/contracts/messages');
+    const ajv = new Ajv(); addFormats(ajv);
+    ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
+    expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, 'execution.parts-reservation-failed.v1.schema.json'), 'utf8')), fake.list('outbox:')[0].payload)).toBe(true);
+  });
+  it('não confirma falha de negócio se o batch não for persistido', async () => {
+    fake.batchCode = 503;
+    await expect(store.reserve({ ...base, items: [{ sku: 'missing', quantity: 1 }] }, now)).rejects.toThrow('Falha no batch');
+    expect(fake.list('outbox:')).toHaveLength(0);
+    expect(fake.get('inbox:reserve:m1')).toBeUndefined();
   });
   it('impede reutilização de mensagem e reserva com operação diferente', async () => {
     await store.reserve(base, now);
