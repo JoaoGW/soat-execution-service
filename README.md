@@ -10,19 +10,21 @@ inbox e outbox. Repetições não duplicam a reserva. Existe um bloqueio duráve
 para impedir reserva posterior ao cancelamento; esse bloqueio por si só não
 comprova que o trabalho físico não começou e não autoriza estorno ou liberação.
 O consumidor preparado valida o contrato, identifica mensagens inválidas para
-DLQ e confirma o processamento somente após a persistência. Prazo expirado e estoque insuficiente geram falhas duráveis com inbox e
-outbox; outras falhas seguem sujeitas a retry/DLQ. O
-consumidor ainda precisa ser ligado ao worker e testado com Service Bus real.
+DLQ e confirma o processamento somente após a persistência. Prazo expirado
+e estoque insuficiente geram falhas duráveis com inbox e outbox; outras falhas
+seguem sujeitas a retry/DLQ. O consumidor ainda precisa ser ligado ao worker e
+testado com Service Bus real.
 
 Os testes atuais usam uma simulação em memória e não comprovam o comportamento
-real de atomicidade, concorrência ou limites do Cosmos. O consumidor de comandos ainda não está conectado ao runtime. O worker da
-outbox está conectado, mas desativado por padrão.
+real de atomicidade, concorrência ou limites do Cosmos. O consumidor de comandos
+ainda não está conectado ao runtime. O worker da outbox está conectado, mas
+desativado por padrão.
 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
 `npm run test:contracts`.
 
 Pendentes: validar Cosmos e identidade com infraestrutura real, integrar
-Service Bus e outbox, implementar cancelamento seguro e reconciliação, catálogo,
+o consumidor Service Bus, implementar cancelamento seguro e reconciliação, catálogo,
 diagnóstico, fila/reparo, APIs e autorização, Sonar, deploy automatizado,
 observabilidade e testes distribuídos.
 
