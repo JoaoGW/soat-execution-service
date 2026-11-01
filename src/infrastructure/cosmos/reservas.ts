@@ -104,7 +104,7 @@ export class CosmosReservationStore {
       const operations: OperationInput[] = [
         gate ? { operationType: 'Replace', id: gateId, ifMatch: gate.etag, resourceBody: gateBody } : { operationType: 'Create', resourceBody: gateBody },
         ...entries.map((entry, index): OperationInput => ({ operationType: 'Replace', id: entry.value.id, ifMatch: entry.etag, resourceBody: { id: entry.value.id, filialId: command.filialId, ...next.stock[index] } })),
-        { operationType: 'Create', resourceBody: { ...next.reservation, id: reservationId, filialId: command.filialId, sagaId: command.sagaId, osId: command.osId, reservationId: command.reservationId, deadline: command.deadline } },
+        { operationType: 'Create', resourceBody: { ...next.reservation, id: reservationId, filialId: command.filialId, sagaId: command.sagaId, osId: command.osId, quoteId: command.quoteId, quoteVersion: command.quoteVersion, reservationId: command.reservationId, deadline: command.deadline } },
         { operationType: 'Create', resourceBody: { id: operationId, filialId: command.filialId, hash, reservationId: command.reservationId } },
         { operationType: 'Create', resourceBody: { id: inboxId, filialId: command.filialId, operationId: command.operationId, hash } },
         { operationType: 'Create', resourceBody: { id: `outbox:${messageId}`, filialId: command.filialId, messageId, status: 'PENDING', payload: event, createdAt: now.toISOString() } },

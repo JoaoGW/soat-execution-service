@@ -15,6 +15,13 @@ e estoque insuficiente geram falhas duráveis com inbox e outbox; outras falhas
 seguem sujeitas a retry/DLQ. O consumidor ainda precisa ser ligado ao worker e
 testado com Service Bus real.
 
+O enfileiramento prepara uma transação na mesma partição para conferir a
+reserva, disputar ETags com o bloqueio de cancelamento e gravar tarefa, inbox,
+operação e evento. A tarefa fica `QUEUED`; não inicia reparo nem consome peças.
+O consumidor de enfileiramento foi preparado, mas ainda não está ligado ao
+runtime. Cancelamento concorrente e idempotência foram testados em simulação;
+começo físico, confirmação de cancelamento, compensação e Cosmos real faltam.
+
 Os testes atuais usam uma simulação em memória e não comprovam o comportamento
 real de atomicidade, concorrência ou limites do Cosmos. O consumidor de comandos
 ainda não está conectado ao runtime. O worker da outbox está conectado, mas
