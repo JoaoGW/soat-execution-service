@@ -15,8 +15,8 @@ outbox; outras falhas seguem sujeitas a retry/DLQ. O
 consumidor ainda precisa ser ligado ao worker e testado com Service Bus real.
 
 Os testes atuais usam uma simulação em memória e não comprovam o comportamento
-real de atomicidade, concorrência ou limites do Cosmos. O adapter e o consumidor ainda não estão
-conectados ao runtime do serviço.
+real de atomicidade, concorrência ou limites do Cosmos. O consumidor de comandos ainda não está conectado ao runtime. O worker da
+outbox está conectado, mas desativado por padrão.
 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
 `npm run test:contracts`.
@@ -25,3 +25,12 @@ Pendentes: validar Cosmos e identidade com infraestrutura real, integrar
 Service Bus e outbox, implementar cancelamento seguro e reconciliação, catálogo,
 diagnóstico, fila/reparo, APIs e autorização, Sonar, deploy automatizado,
 observabilidade e testes distribuídos.
+
+O worker da outbox só inicia com `ENABLE_EXECUTION_OUTBOX=true` e exige
+`COSMOS_ENDPOINT`, `COSMOS_DATABASE`, `COSMOS_CONTAINER`,
+`SERVICE_BUS_NAMESPACE`, `SERVICE_BUS_EVENT_TOPIC` e as variáveis de identidade
+federada do Azure. As credenciais devem conceder acesso ao container Cosmos e
+publicação no topic. Ele usa lease e ETag, retenta cinco vezes e mantém eventos
+em `FAILED` para intervenção. A publicação é pelo menos uma vez: após falha de
+confirmação, o mesmo `messageId` pode ser enviado novamente. Nenhum serviço real
+é contatado se o worker estiver desativado; a integração real permanece pendente.
