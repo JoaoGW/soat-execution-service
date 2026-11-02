@@ -46,3 +46,12 @@ confirmação, o mesmo `messageId` pode ser enviado novamente. Nenhum serviço r
 O consumidor exige `ENABLE_EXECUTION_COMMANDS=true`, a configuração do Cosmos,
 da fila Service Bus e a identidade de workload. A ligação real e o isolamento
 de produtores ainda não foram validados.
+
+O adapter de reparo prepara início e conclusão com ETags, operação, inbox e
+outbox. O início consome a reserva de peças atomicamente. Cancelamento antes do
+início grava uma barreira; depois do início retorna `ALREADY_STARTED` e não
+reverte trabalho físico. A liberação exige a operação de cancelamento
+confirmada e nenhuma tarefa iniciada; não verifica a situação financeira, que
+continua sendo responsabilidade da Saga. Cancelamento e liberação têm
+consumidores preparados. Início e conclusão ainda não estão expostos por API
+administrativa, e os testes de concorrência usam Cosmos simulado.

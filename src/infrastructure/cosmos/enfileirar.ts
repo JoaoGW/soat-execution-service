@@ -66,7 +66,7 @@ export class CosmosEnqueueStore {
       const operations: OperationInput[] = [
         { operationType: 'Replace', id: gateId, ifMatch: gate.etag, resourceBody: gateBody },
         { operationType: 'Replace', id: reservation.value.id, ifMatch: reservation.etag, resourceBody: reservationBody },
-        { operationType: 'Create', resourceBody: { id: `task:${command.osId}`, filialId: command.filialId, osId: command.osId, sagaId: command.sagaId, executionId: command.executionId, reservationId: command.reservationId, quoteId: command.quoteId, quoteVersion: command.quoteVersion, chargeId: command.chargeId, paymentId: command.paymentId, providerOrderId: command.providerOrderId, providerPaymentId: command.providerPaymentId, status: 'QUEUED', createdAt: now.toISOString() } },
+        { operationType: 'Create', resourceBody: { id: `task:${command.osId}`, filialId: command.filialId, osId: command.osId, sagaId: command.sagaId, executionId: command.executionId, reservationId: command.reservationId, quoteId: command.quoteId, quoteVersion: command.quoteVersion, chargeId: command.chargeId, paymentId: command.paymentId, providerOrderId: command.providerOrderId, providerPaymentId: command.providerPaymentId, status: 'QUEUED', version: 1, createdAt: now.toISOString() } },
         { operationType: 'Create', resourceBody: { id: operationId, filialId: command.filialId, hash, executionId: command.executionId } },
         { operationType: 'Create', resourceBody: { id: inboxId, filialId: command.filialId, operationId: command.operationId, hash } },
         { operationType: 'Create', resourceBody: { id: `outbox:${messageId}`, filialId: command.filialId, messageId, status: 'PENDING', payload: event, createdAt: now.toISOString() } },
