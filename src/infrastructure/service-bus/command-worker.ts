@@ -6,6 +6,8 @@ import { resolve } from 'node:path';
 import { CosmosReservationStore } from '../cosmos/reservas';
 import { CosmosEnqueueStore } from '../cosmos/enfileirar';
 import { CosmosWorkStore } from '../cosmos/reparo';
+import { CosmosDiagnosisStore } from '../cosmos/diagnostico';
+import { DiagnosisCommandConsumer, createDiagnosisValidator } from './diagnosis-consumer';
 import { CancelCommandConsumer, createCancelValidator } from './cancel-consumer';
 import { ReleaseCommandConsumer, createReleaseValidator } from './release-consumer';
 import { ReserveCommandConsumer, createReserveValidator } from './reserve-consumer';
@@ -28,7 +30,7 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
         !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) || !queue ||
         !process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) throw new Error('Configuração incompleta do worker de comandos');
     const directory = resolve(process.cwd(), 'docs/contracts/messages');
-    const reserveValidator = createReserveValidator(directory); const enqueueValidator = createEnqueueValidator(directory); const cancelValidator = createCancelValidator(directory); const releaseValidator = createReleaseValidator(directory);
+    const reserveValidator = createReserveValidator(directory); const enqueueValidator = createEnqueueValidator(directory); const cancelValidator = createCancelValidator(directory); const releaseValidator = createReleaseValidator(directory); const diagnosisValidator = createDiagnosisValidator(directory);
     const identity = new WorkloadIdentityCredential();
     this.cosmos = new CosmosClient({ endpoint, aadCredentials: identity });
     this.bus = new ServiceBusClient(namespace, identity);
@@ -38,6 +40,7 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
     const enqueue = new EnqueueCommandConsumer(new CosmosEnqueueStore(operations), enqueueValidator);
     const cancel = new CancelCommandConsumer(new CosmosWorkStore(operations), cancelValidator);
     const release = new ReleaseCommandConsumer(new CosmosWorkStore(operations), releaseValidator);
+    const diagnosis = new DiagnosisCommandConsumer(new CosmosDiagnosisStore(operations), diagnosisValidator);
     this.subscription = receiver.subscribe({
       processMessage: async (message) => {
         const body: unknown = message.body;
@@ -46,6 +49,7 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
         if (type === 'execution.enqueue-work.v1') return enqueue.process(message, receiver);
         if (type === 'execution.cancel-work.v1') return cancel.process(message, receiver);
         if (type === 'execution.release-parts.v1') return release.process(message, receiver);
+        if (type === 'execution.request-diagnosis.v1') return diagnosis.process(message, receiver);
         // The broker may eventually send unsupported commands to the DLQ; do not claim success.
         this.logger.warn('Comando ainda não suportado; permanecem necessárias outras etapas de Execution');
         await receiver.abandonMessage(message);

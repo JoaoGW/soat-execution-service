@@ -20,8 +20,9 @@ reserva, disputar ETags com o bloqueio de cancelamento e gravar tarefa, inbox,
 operação e evento. A tarefa fica `QUEUED`; não inicia reparo nem consome peças.
 Os consumidores de reserva e enfileiramento estão ligados ao runtime,
 mas desativados por padrão. Outros comandos ainda não são suportados e podem
-chegar à DLQ após as tentativas; não habilitar até completar os handlers. Cancelamento concorrente e idempotência foram testados em simulação;
-começo físico, confirmação de cancelamento, compensação e Cosmos real faltam.
+chegar à DLQ após as tentativas; não habilitar até completar os handlers e
+validar o isolamento de produtores. Cancelamento concorrente e idempotência
+foram testados em simulação; a operação real ainda precisa de validação.
 
 Os testes atuais usam uma simulação em memória e não comprovam o comportamento
 real de atomicidade, concorrência ou limites do Cosmos. Os workers de comandos e outbox estão conectados, mas desativados por padrão.
@@ -30,8 +31,8 @@ Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
 `npm run test:contracts`.
 
 Pendentes: validar Cosmos e identidade com infraestrutura real, integrar
-o consumidor Service Bus, implementar cancelamento seguro e reconciliação, catálogo,
-diagnóstico, fila/reparo, APIs e autorização, Sonar, deploy automatizado,
+reconciliação e compensação à Saga, catálogo, ações de diagnóstico e reparo,
+APIs e autorização, Sonar, deploy automatizado,
 observabilidade e testes distribuídos.
 
 O worker da outbox só inicia com `ENABLE_EXECUTION_OUTBOX=true` e exige
@@ -55,3 +56,7 @@ confirmada e nenhuma tarefa iniciada; não verifica a situação financeira, que
 continua sendo responsabilidade da Saga. Cancelamento e liberação têm
 consumidores preparados. Início e conclusão ainda não estão expostos por API
 administrativa, e os testes de concorrência usam Cosmos simulado.
+
+A solicitação de diagnóstico é recebida pelo worker e gravada como pendente,
+com inbox, idempotência e barreira de cancelamento na mesma partição. Início,
+conclusão com snapshot de preços e APIs autenticadas continuam pendentes.
