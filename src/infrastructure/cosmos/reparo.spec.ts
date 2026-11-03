@@ -62,6 +62,11 @@ describe('CosmosWorkStore', () => {
     ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
     return ajv.validate(JSON.parse(readFileSync(resolve(dir, `${String(event.type)}.schema.json`), 'utf8')), event);
   }
+  it('inicia e conclui reparo sem peças', async () => {
+    fake.seed({ id: 'reservation:os1', filialId: 'f1', osId: 'os1', sagaId: 's1', reservationId: 'r1', status: 'RESERVED', items: [] });
+    await expect(store.start(base, now)).resolves.toBe('STARTED');
+    await expect(store.complete({ ...base, messageId: 'finish', operationId: 'finish' }, new Date('2030-01-01T01:00:00Z'))).resolves.toBe('COMPLETED');
+  });
   it('consome reserva atomicamente, registra início, conclusão e cancelamento tardio', async () => {
     await expect(store.start(base, now)).resolves.toBe('STARTED');
     expect(fake.get('stock:p1')).toMatchObject({ balance: 8, reserved: 0 });

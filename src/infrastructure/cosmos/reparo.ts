@@ -88,7 +88,7 @@ export class CosmosWorkStore {
         if (task) operations.push({ operationType: 'Replace', id: taskId, ifMatch: task.etag, resourceBody: clean(task.value) });
         const reservation = await this.read<StoredReservation>(`reservation:${input.osId}`, input.filialId);
         if (reservation) {
-          if (reservation.value.reservationId !== input.reservationId || reservation.value.sagaId !== input.sagaId || reservation.value.osId !== input.osId || reservation.value.status !== 'RESERVED' || !Array.isArray(reservation.value.items) || reservation.value.items.length < 1 || reservation.value.items.length > 20) throw new Error('Reserva não pode ser liberada');
+          if (reservation.value.reservationId !== input.reservationId || reservation.value.sagaId !== input.sagaId || reservation.value.osId !== input.osId || reservation.value.status !== 'RESERVED' || !Array.isArray(reservation.value.items) || reservation.value.items.length > 20) throw new Error('Reserva não pode ser liberada');
           const stocks = await Promise.all(reservation.value.items.map((line) => this.read<StockDoc>(`stock:${line.sku}`, input.filialId)));
           if (stocks.some((stock) => !stock)) throw new Error('Estoque inválido');
           const entries = stocks as Stored<StockDoc>[];
@@ -99,7 +99,7 @@ export class CosmosWorkStore {
       } else if (action === 'start') {
         if (!gate || gate.value.cancelled || !task || task.value.status !== 'QUEUED') throw new Error('Trabalho não pode ser iniciado');
         const reservation = await this.read<StoredReservation>(`reservation:${input.osId}`, input.filialId);
-        if (!reservation || reservation.value.status !== 'RESERVED' || reservation.value.reservationId !== task.value.reservationId || reservation.value.sagaId !== input.sagaId || reservation.value.osId !== input.osId || !Array.isArray(reservation.value.items) || reservation.value.items.length < 1 || reservation.value.items.length > 20) throw new Error('Reserva inválida');
+        if (!reservation || reservation.value.status !== 'RESERVED' || reservation.value.reservationId !== task.value.reservationId || reservation.value.sagaId !== input.sagaId || reservation.value.osId !== input.osId || !Array.isArray(reservation.value.items) || reservation.value.items.length > 20) throw new Error('Reserva inválida');
         const stocks = await Promise.all(reservation.value.items.map((line) => this.read<StockDoc>(`stock:${line.sku}`, input.filialId)));
         if (stocks.some((stock) => !stock)) throw new Error('Estoque inválido');
         const entries = stocks as Stored<StockDoc>[];

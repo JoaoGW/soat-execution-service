@@ -65,6 +65,13 @@ describe('CosmosReservationStore', () => {
     const schema = JSON.parse(readFileSync(resolve(dir, 'execution.parts-reserved.v1.schema.json'), 'utf8'));
     expect(ajv.validate(schema, fake.list('outbox:')[0].payload)).toBe(true);
   });
+  it('registra reserva sem peças e emite evento compatível', async () => {
+    await expect(store.reserve({ ...base, items: [] }, now)).resolves.toEqual({ reservationId: 'r1' });
+    expect(fake.get('reservation:os1')).toMatchObject({ status: 'RESERVED', items: [] });
+    const dir = resolve(process.cwd(), 'docs/contracts/messages'); const ajv = new Ajv(); addFormats(ajv);
+    ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
+    expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, 'execution.parts-reserved.v1.schema.json'), 'utf8')), fake.list('outbox:')[0].payload)).toBe(true);
+  });
   it('deduplica nova mensagem da mesma operação e rejeita conteúdo alterado', async () => {
     await store.reserve(base, now);
     await expect(store.reserve({ ...base, messageId: 'm2' }, new Date('2040-01-01T00:00:00Z'))).resolves.toEqual({ reservationId: 'r1' });
