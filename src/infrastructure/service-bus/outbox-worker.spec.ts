@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { CosmosClient } from '@azure/cosmos';
 import { WorkloadIdentityCredential } from '@azure/identity';
 import { ServiceBusClient } from '@azure/service-bus';
@@ -10,13 +11,14 @@ jest.mock('@azure/service-bus');
 jest.mock('../cosmos/outbox');
 
 describe('ExecutionOutboxWorker', () => {
+  const key = generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const env = process.env;
   const sender = { close: jest.fn().mockResolvedValue(undefined) };
   const bus = { createSender: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
   const cosmos = { database: jest.fn(), dispose: jest.fn() };
   const dispatcher = { dispatchOne: jest.fn().mockResolvedValue('EMPTY') };
   beforeEach(() => {
-    jest.clearAllMocks(); process.env = { ...env }; delete process.env.ENABLE_EXECUTION_OUTBOX;
+    jest.clearAllMocks(); process.env = { ...env, EXECUTION_MESSAGE_PRIVATE_KEY: key }; delete process.env.ENABLE_EXECUTION_OUTBOX;
     bus.createSender.mockReturnValue(sender);
     cosmos.database.mockReturnValue({ container: jest.fn().mockReturnValue({}) });
     jest.mocked(ServiceBusClient).mockImplementation(() => bus as unknown as ServiceBusClient);

@@ -69,3 +69,10 @@ um item. Configurar `JWT_SECRET` com a chave administrativa do OS (mínimo de
 identity. A entrega desses segredos e os acessos precisam ser configurados
 antes do uso. O consumo dos eventos de diagnóstico e a geração do comando de
 orçamento foram preparados no OS; o fluxo distribuído ainda requer validação.
+
+O transporte exige assinatura Ed25519 para autenticar o OS. Ao habilitar os
+workers, configure `OS_MESSAGE_PUBLIC_KEY` e a chave privada exclusiva de
+Execution em `EXECUTION_MESSAGE_PRIVATE_KEY`; eventos são assinados e comandos
+sem assinatura válida seguem à DLQ antes do processamento. Não compartilhe
+chaves privadas entre serviços. Distribuição e rotação das chaves ainda precisam
+ser configuradas e testadas no ambiente real.

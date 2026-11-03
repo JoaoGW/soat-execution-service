@@ -12,6 +12,7 @@ import { CancelCommandConsumer, createCancelValidator } from './cancel-consumer'
 import { ReleaseCommandConsumer, createReleaseValidator } from './release-consumer';
 import { ReserveCommandConsumer, createReserveValidator } from './reserve-consumer';
 import { EnqueueCommandConsumer, createEnqueueValidator } from './enqueue-consumer';
+import { MessageVerifier } from './message-signature';
 
 /** Disabled by default; unsupported commands remain unacknowledged. */
 @Injectable()
@@ -26,9 +27,11 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
     if (process.env.ENABLE_EXECUTION_COMMANDS !== 'true') return;
     const endpoint = process.env.COSMOS_ENDPOINT; const database = process.env.COSMOS_DATABASE; const container = process.env.COSMOS_CONTAINER;
     const namespace = process.env.SERVICE_BUS_NAMESPACE; const queue = process.env.SERVICE_BUS_COMMAND_QUEUE;
-    if (!endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container ||
+    const osKey = process.env.OS_MESSAGE_PUBLIC_KEY;
+    if (!osKey || !endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container ||
         !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) || !queue ||
         !process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) throw new Error('Configuração incompleta do worker de comandos');
+    const verifier = new MessageVerifier(osKey, 'soat-os-service');
     const directory = resolve(process.cwd(), 'docs/contracts/messages');
     const reserveValidator = createReserveValidator(directory); const enqueueValidator = createEnqueueValidator(directory); const cancelValidator = createCancelValidator(directory); const releaseValidator = createReleaseValidator(directory); const diagnosisValidator = createDiagnosisValidator(directory);
     const identity = new WorkloadIdentityCredential();
@@ -44,6 +47,9 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
     this.subscription = receiver.subscribe({
       processMessage: async (message) => {
         const body: unknown = message.body;
+        if (!verifier.verify(body, message.applicationProperties?.signature)) {
+          await receiver.deadLetterMessage(message, { deadLetterReason: 'UnauthenticatedProducer', deadLetterErrorDescription: 'Assinatura inválida' }); return;
+        }
         const type = body && typeof body === 'object' && 'type' in body ? body.type : undefined;
         if (type === 'execution.reserve-parts.v1') return reserve.process(message, receiver);
         if (type === 'execution.enqueue-work.v1') return enqueue.process(message, receiver);

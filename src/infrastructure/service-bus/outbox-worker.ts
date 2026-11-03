@@ -4,6 +4,7 @@ import { WorkloadIdentityCredential } from '@azure/identity';
 import { ServiceBusClient, ServiceBusSender } from '@azure/service-bus';
 import { CosmosOutboxDispatcher } from '../cosmos/outbox';
 import { ServiceBusEventPublisher } from './event-publisher';
+import { MessageSigner } from './message-signature';
 
 @Injectable()
 export class ExecutionOutboxWorker implements OnModuleInit, OnApplicationShutdown {
@@ -23,16 +24,18 @@ export class ExecutionOutboxWorker implements OnModuleInit, OnApplicationShutdow
     const container = process.env.COSMOS_CONTAINER;
     const namespace = process.env.SERVICE_BUS_NAMESPACE;
     const topic = process.env.SERVICE_BUS_EVENT_TOPIC;
-    if (!endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container ||
+    const signingKey = process.env.EXECUTION_MESSAGE_PRIVATE_KEY;
+    if (!signingKey || !endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container ||
         !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) || !topic ||
         !process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) {
       throw new Error('Configuração incompleta do worker da outbox');
     }
+    const signer = new MessageSigner(signingKey);
     const identity = new WorkloadIdentityCredential();
     this.cosmos = new CosmosClient({ endpoint, aadCredentials: identity });
     this.bus = new ServiceBusClient(namespace, identity);
     this.sender = this.bus.createSender(topic);
-    this.dispatcher = new CosmosOutboxDispatcher(this.cosmos.database(database).container(container), new ServiceBusEventPublisher(this.sender));
+    this.dispatcher = new CosmosOutboxDispatcher(this.cosmos.database(database).container(container), new ServiceBusEventPublisher(this.sender, signer));
     this.active = this.poll();
   }
 
