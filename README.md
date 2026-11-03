@@ -67,4 +67,5 @@ da filial e fixa os preços em centavos antes de publicar os eventos. As rotas
 um item. Configurar `JWT_SECRET` com a chave administrativa do OS (mínimo de
 32 bytes), distinta de `JWT_CLIENT_SECRET`, e as variáveis de Cosmos e workload
 identity. A entrega desses segredos e os acessos precisam ser configurados
-antes do uso. Os eventos de diagnóstico ainda não são consumidos pela Saga.
+antes do uso. O consumo dos eventos de diagnóstico e a geração do comando de
+orçamento foram preparados no OS; o fluxo distribuído ainda requer validação.
