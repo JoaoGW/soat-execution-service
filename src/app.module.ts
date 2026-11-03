@@ -1,6 +1,8 @@
 import { Controller, Get, Module } from '@nestjs/common';
 import { ExecutionOutboxWorker } from './infrastructure/service-bus/outbox-worker';
 import { ExecutionCommandWorker } from './infrastructure/service-bus/command-worker';
+import { CatalogController, RepairController, WorkActions } from './interfaces/reparo-controller';
+import { AdminGuard } from './interfaces/admin-guard';
 
 @Controller()
 export class HealthController {
@@ -10,5 +12,5 @@ export class HealthController {
   }
 }
 
-@Module({ controllers: [HealthController], providers: [ExecutionOutboxWorker, ExecutionCommandWorker] })
+@Module({ controllers: [HealthController, RepairController, CatalogController], providers: [ExecutionOutboxWorker, ExecutionCommandWorker, AdminGuard, WorkActions] })
 export class AppModule {}

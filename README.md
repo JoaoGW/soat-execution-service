@@ -12,8 +12,7 @@ comprova que o trabalho físico não começou e não autoriza estorno ou libera�
 O consumidor preparado valida o contrato, identifica mensagens inválidas para
 DLQ e confirma o processamento somente após a persistência. Prazo expirado
 e estoque insuficiente geram falhas duráveis com inbox e outbox; outras falhas
-seguem sujeitas a retry/DLQ. O consumidor ainda precisa ser ligado ao worker e
-testado com Service Bus real.
+seguem sujeitas a retry/DLQ. O worker precisa ser testado com Service Bus real.
 
 O enfileiramento prepara uma transação na mesma partição para conferir a
 reserva, disputar ETags com o bloqueio de cancelamento e gravar tarefa, inbox,
@@ -31,8 +30,8 @@ Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
 `npm run test:contracts`.
 
 Pendentes: validar Cosmos e identidade com infraestrutura real, integrar
-reconciliação e compensação à Saga, catálogo, ações de diagnóstico e reparo,
-APIs e autorização, Sonar, deploy automatizado,
+reconciliação e compensação à Saga, CRUD completo e listagem do catálogo,
+Sonar, deploy automatizado,
 observabilidade e testes distribuídos.
 
 O worker da outbox só inicia com `ENABLE_EXECUTION_OUTBOX=true` e exige
@@ -54,9 +53,18 @@ início grava uma barreira; depois do início retorna `ALREADY_STARTED` e não
 reverte trabalho físico. A liberação exige a operação de cancelamento
 confirmada e nenhuma tarefa iniciada; não verifica a situação financeira, que
 continua sendo responsabilidade da Saga. Cancelamento e liberação têm
-consumidores preparados. Início e conclusão ainda não estão expostos por API
-administrativa, e os testes de concorrência usam Cosmos simulado.
+consumidores preparados. Os testes de concorrência usam Cosmos simulado.
 
 A solicitação de diagnóstico é recebida pelo worker e gravada como pendente,
-com inbox, idempotência e barreira de cancelamento na mesma partição. Início,
-conclusão com snapshot de preços e APIs autenticadas continuam pendentes.
+com inbox, idempotência e barreira de cancelamento na mesma partição. As rotas
+administrativas `POST /execucoes/:osId/iniciar-diagnostico`,
+`/concluir-diagnostico`, `/iniciar` e `/finalizar` exigem JWT administrativo
+HS256, expiração e `Idempotency-Key`. Recebem `sagaId`, `filialId` e,
+nas ações de reparo, `executionId`; a conclusão de diagnóstico recebe também
+`items` com `sourceId`, `itemType` e `quantity`. O servidor consulta o catálogo
+da filial e fixa os preços em centavos antes de publicar os eventos. As rotas
+`PUT` e `GET /catalogo/:filialId/:itemType/:sourceId` administram e consultam
+um item. Configurar `JWT_SECRET` com a chave administrativa do OS (mínimo de
+32 bytes), distinta de `JWT_CLIENT_SECRET`, e as variáveis de Cosmos e workload
+identity. A entrega desses segredos e os acessos precisam ser configurados
+antes do uso. Os eventos de diagnóstico ainda não são consumidos pela Saga.

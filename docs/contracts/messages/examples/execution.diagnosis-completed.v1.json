@@ -1,0 +1,28 @@
+{
+  "messageId": "msg-completed",
+  "type": "execution.diagnosis-completed.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-11-03T15:00:00Z",
+  "producer": "soat-execution-service",
+  "aggregateType": "diagnosis",
+  "aggregateId": "os-001",
+  "aggregateVersion": 3,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "corr-001",
+  "causationId": "op-completed",
+  "operationId": "op-completed",
+  "data": {
+    "diagnosisId": "os-001",
+    "diagnosisVersion": 3,
+    "items": [
+      {
+        "sourceId": "peca-001",
+        "itemType": "PART",
+        "quantity": 2,
+        "unitPriceInCents": 500
+      }
+    ]
+  }
+}
