@@ -1,15 +1,19 @@
-import { BadRequestException, Body, Controller, Get, Headers, Injectable, NotFoundException, OnApplicationShutdown, Param, Post, Put, ServiceUnavailableException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Get, Headers, Injectable, NotFoundException, OnApplicationShutdown, Param, Post, Put, Query, Req, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { CosmosClient } from '@azure/cosmos';
 import { WorkloadIdentityCredential } from '@azure/identity';
 import { CosmosWorkStore, WorkAction } from '../infrastructure/cosmos/reparo';
 import { AdminGuard } from './admin-guard';
 import { CatalogItem, CosmosDiagnosisActions, Selection } from '../infrastructure/cosmos/diagnostico-operacoes';
+import { CosmosQueueQuery } from '../infrastructure/cosmos/fila';
+import { CosmosStockActions } from '../infrastructure/cosmos/estoque';
 
 @Injectable()
 export class WorkActions implements OnApplicationShutdown {
   private client?: CosmosClient;
   private store?: CosmosWorkStore;
   private diagnosis?: CosmosDiagnosisActions;
+  private queue?: CosmosQueueQuery;
+  private stock?: CosmosStockActions;
   private getStore(): CosmosWorkStore {
     if (this.store) return this.store;
     const endpoint = process.env.COSMOS_ENDPOINT; const database = process.env.COSMOS_DATABASE; const container = process.env.COSMOS_CONTAINER;
@@ -18,6 +22,8 @@ export class WorkActions implements OnApplicationShutdown {
     const operations = this.client.database(database).container(container);
     this.store = new CosmosWorkStore(operations);
     this.diagnosis = new CosmosDiagnosisActions(operations);
+    this.queue = new CosmosQueueQuery(operations);
+    this.stock = new CosmosStockActions(operations);
     return this.store;
   }
   async start(input: WorkAction) { return this.getStore().start(input); }
@@ -28,7 +34,27 @@ export class WorkActions implements OnApplicationShutdown {
   }
   async putCatalog(filialId: string, item: CatalogItem) { this.getStore(); return this.diagnosis!.putCatalog(filialId, item); }
   async getCatalog(filialId: string, itemType: string, sourceId: string) { this.getStore(); return this.diagnosis!.getCatalog(filialId, itemType, sourceId); }
+  async listQueue(input: { filialId: string; limit: number; continuationToken?: string }) { this.getStore(); return this.queue!.execute(input); }
+  async getStock(filialId: string, sku: string) { this.getStore(); return this.stock!.get(filialId, sku); }
+  async setStock(input: { filialId: string; sku: string; balance: number; operationId: string; actorId: string; reason: string }) { this.getStore(); return this.stock!.set(input); }
   onApplicationShutdown() { this.client?.dispose(); }
+}
+
+@Controller('estoque')
+@UseGuards(AdminGuard)
+export class StockController {
+  constructor(private readonly work: WorkActions) {}
+  @Get(':filialId/:sku')
+  async get(@Param('filialId') filialId: string, @Param('sku') sku: string) {
+    if (![filialId, sku].every(value => typeof value === 'string' && /^[a-z0-9_-]{1,128}$/i.test(value))) throw new BadRequestException('Identificadores inválidos');
+    const result = await this.work.getStock(filialId, sku); if (!result) throw new NotFoundException(); return result;
+  }
+  @Put(':filialId/:sku')
+  async set(@Param('filialId') filialId: string, @Param('sku') sku: string, @Headers('idempotency-key') operationId: string | undefined, @Req() request: { adminId?: string }, @Body() body: { balance: number; reason: string }) {
+    if (![filialId, sku, operationId, body?.reason].every(value => typeof value === 'string' && /^[a-z0-9_-]{1,128}$/i.test(value)) || typeof request.adminId !== 'string' || !/^[a-z0-9_@.-]{1,128}$/i.test(request.adminId) || !body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['balance', 'reason'].includes(key)) || !Number.isSafeInteger(body.balance) || body.balance < 0 || body.balance > 2147483647) throw new BadRequestException('Dados inválidos');
+    try { return await this.work.setStock({ filialId, sku, operationId: operationId!, actorId: request.adminId, balance: body.balance, reason: body.reason }); }
+    catch (error) { const message = error instanceof Error ? error.message : ''; if (message === 'Peça não encontrada') throw new NotFoundException(); if (['Saldo menor que o reservado', 'Chave de idempotência conflitante', 'Conflito de concorrência Cosmos'].includes(message)) throw new ConflictException(message); throw error; }
+  }
 }
 
 type ActionBody = { sagaId: string; filialId: string; executionId: string; correlationId?: string };
@@ -43,6 +69,12 @@ function action(osId: string, operationId: string | undefined, body: ActionBody)
 @UseGuards(AdminGuard)
 export class RepairController {
   constructor(private readonly work: WorkActions) {}
+  @Get('fila')
+  async listQueue(@Query('filialId') filialId: string, @Query('limit') limit?: string, @Query('continuationToken') continuationToken?: string) {
+    if (typeof filialId !== 'string' || !/^[a-z0-9_-]{1,128}$/i.test(filialId) || (limit !== undefined && (typeof limit !== 'string' || !/^(?:[1-9]|[1-9][0-9]|100)$/.test(limit))) || (continuationToken !== undefined && (typeof continuationToken !== 'string' || !/^[a-z0-9_-]{1,512}$/i.test(continuationToken)))) throw new BadRequestException('Consulta inválida');
+    try { return await this.work.listQueue({ filialId, limit: limit === undefined ? 20 : Number(limit), ...(continuationToken ? { continuationToken } : {}) }); }
+    catch (error) { if (error instanceof Error && error.message === 'Consulta inválida') throw new BadRequestException('Consulta inválida'); throw error; }
+  }
   @Post(':osId/iniciar')
   async start(@Param('osId') osId: string, @Headers('idempotency-key') operationId: string | undefined, @Body() body: ActionBody) {
     return { status: await this.work.start(action(osId, operationId, body)) };

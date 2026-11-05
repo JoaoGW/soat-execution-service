@@ -1,8 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
-import { CatalogController, RepairController, WorkActions } from './reparo-controller';
+import { CatalogController, RepairController, StockController, WorkActions } from './reparo-controller';
 
 describe('ações de reparo', () => {
-  const work = { start: jest.fn(), complete: jest.fn() };
+  const work = { start: jest.fn(), complete: jest.fn(), listQueue: jest.fn() };
   const controller = new RepairController(work as unknown as WorkActions);
   const body = { sagaId: 's1', filialId: 'f1', executionId: 'e1' };
   beforeEach(() => jest.resetAllMocks());
@@ -18,6 +18,29 @@ describe('ações de reparo', () => {
     const extra = { ...body, status: 'STARTED' };
     await expect(controller.start('os1', 'op1', extra)).rejects.toThrow(BadRequestException);
     expect(work.start).not.toHaveBeenCalled();
+  });
+  it('valida filial e paginação da fila', async () => {
+    work.listQueue.mockResolvedValue({ items: [], continuationToken: null });
+    await expect(controller.listQueue('f1', '10', 'token')).resolves.toEqual({ items: [], continuationToken: null });
+    expect(work.listQueue).toHaveBeenCalledWith({ filialId: 'f1', limit: 10, continuationToken: 'token' });
+    await expect(controller.listQueue('../', '10')).rejects.toThrow(BadRequestException);
+    await expect(controller.listQueue('f1', '101')).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('consulta e ajuste de estoque', () => {
+  const work = { getStock: jest.fn(), setStock: jest.fn() }; const controller = new StockController(work as unknown as WorkActions);
+  beforeEach(() => jest.resetAllMocks());
+  it('passa o ator autenticado e a chave de idempotência', async () => {
+    work.setStock.mockResolvedValue({ balance: 5, reserved: 2, available: 3 });
+    await expect(controller.set('f1', 'p1', 'op1', { adminId: 'admin' }, { balance: 5, reason: 'COUNT' })).resolves.toMatchObject({ available: 3 });
+    expect(work.setStock).toHaveBeenCalledWith({ filialId: 'f1', sku: 'p1', operationId: 'op1', actorId: 'admin', balance: 5, reason: 'COUNT' });
+    await expect(controller.set('f1', 'p1', undefined, { adminId: 'admin' }, { balance: 5, reason: 'COUNT' })).rejects.toThrow(BadRequestException);
+  });
+  it('traduz conflito e ausência de peça', async () => {
+    work.setStock.mockRejectedValueOnce(new Error('Saldo menor que o reservado')).mockRejectedValueOnce(new Error('Peça não encontrada'));
+    await expect(controller.set('f1', 'p1', 'op1', { adminId: 'admin' }, { balance: 0, reason: 'COUNT' })).rejects.toMatchObject({ status: 409 });
+    await expect(controller.set('f1', 'p1', 'op2', { adminId: 'admin' }, { balance: 0, reason: 'COUNT' })).rejects.toMatchObject({ status: 404 });
   });
 });
 

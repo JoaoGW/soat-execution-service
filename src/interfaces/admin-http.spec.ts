@@ -20,5 +20,11 @@ describe('autorização HTTP das ações de Execution', () => {
     expect((await send('cliente')).status).toBe(401);
     expect((await send('admin')).status).toBe(503);
     expect((await fetch(`${url}/catalogo/f1/PART/p1`)).status).toBe(401);
+    expect((await fetch(`${url}/execucoes/fila?filialId=f1`)).status).toBe(401);
+    const admin = `Bearer ${sign({ sub: 'admin', role: 'admin' }, secret, { expiresIn: '1h' })}`;
+    expect((await fetch(`${url}/execucoes/fila?filialId=f1&limit=101`, { headers: { authorization: admin } })).status).toBe(400);
+    expect((await fetch(`${url}/execucoes/fila?filialId=f1`, { headers: { authorization: admin } })).status).toBe(503);
+    expect((await fetch(`${url}/estoque/f1/p1`)).status).toBe(401);
+    expect((await fetch(`${url}/estoque/f1/p1`, { method: 'PUT', headers: { authorization: admin, 'content-type': 'application/json', 'idempotency-key': 'op1' }, body: JSON.stringify({ balance: 1, reason: 'COUNT' }) })).status).toBe(503);
   });
 });

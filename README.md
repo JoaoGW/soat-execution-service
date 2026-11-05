@@ -1,5 +1,30 @@
 # Execution Service — Fase 4
 
+`GET /execucoes/fila?filialId=...&limit=20` exige JWT administrativo e lista
+trabalhos `QUEUED` daquela filial em ordem de entrada, com no máximo 100 itens.
+A resposta inclui `continuationToken` para a próxima página; o cursor pertence
+à mesma filial. O teste `npm run test:cosmos-queue` exige
+`COSMOS_TEST_ENDPOINT=http://127.0.0.1:8081` e usa um banco temporário no
+emulador. A indexação do caminho `queueKey` é necessária no Cosmos real.
+A referência REST das rotas implementadas está em [docs/openapi.yaml](docs/openapi.yaml).
+
+`GET /estoque/:filialId/:sku` consulta saldo, reservado e disponível; o
+`PUT` no mesmo caminho ajusta o saldo absoluto e exige JWT administrativo,
+`Idempotency-Key` e corpo `{"balance":10,"reason":"INVENTORY"}`. A peça
+precisa existir no catálogo da filial e o novo saldo não pode ser menor que a
+quantidade reservada. O ajuste, sua chave, motivo e ator são gravados em batch
+transacional; uma repetição retorna o resultado original sem reverter ajustes
+posteriores. O teste no emulador não substitui a validação de atomicidade e
+concorrência no Cosmos real.
+
+Tarefas enfileiradas por versões anteriores podem não ter `queueKey`. Antes de
+ativar a consulta em ambiente com dados existentes, execute por filial
+`QUEUE_BACKFILL_FILIAL=<filial> npm run ops:backfill-queue` com identidade e
+configuração Cosmos do workload. Sem argumentos o comando apenas inspeciona;
+`npm run ops:backfill-queue -- --apply` grava as chaves com ETag, sem alterar
+outros campos. Em conflito, reavalie e execute novamente. Tarefas antigas sem
+a chave não aparecem na listagem até esse procedimento.
+
 Serviço em desenvolvimento; ainda não está pronto para receber tráfego ou
 para deploy. As funções de domínio calculam reserva, consumo e liberação de
 estoque, agregando quantidades por SKU e limitando a reserva a 20 SKUs.
