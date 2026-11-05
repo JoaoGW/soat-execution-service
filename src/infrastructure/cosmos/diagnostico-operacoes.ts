@@ -44,6 +44,30 @@ export class CosmosDiagnosisActions {
     if (value.sourceId !== sourceId || value.itemType !== itemType || typeof value.name !== 'string' || !Number.isSafeInteger(value.unitPriceInCents) || typeof value.active !== 'boolean' || !Number.isSafeInteger(value.version)) throw new Error('Item persistido inválido');
     return { sourceId, itemType: itemType as CatalogItem['itemType'], name: value.name, unitPriceInCents: value.unitPriceInCents as number, active: value.active, version: value.version as number };
   }
+  async listCatalog(input: { filialId: string; itemType: string; limit: number; continuationToken?: string }) {
+    if (!idValid(input.filialId) || !['PART', 'SERVICE'].includes(input.itemType) || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100 || (input.continuationToken !== undefined && (typeof input.continuationToken !== 'string' || !/^[a-z0-9_-]{1,512}$/i.test(input.continuationToken)))) throw new Error('Consulta inválida');
+    let after = '';
+    if (input.continuationToken) {
+      try { const value: unknown = JSON.parse(Buffer.from(input.continuationToken, 'base64url').toString('utf8')); if (!value || typeof value !== 'object' || !('filialId' in value) || value.filialId !== input.filialId || !('itemType' in value) || value.itemType !== input.itemType || !('sourceId' in value) || !idValid(value.sourceId)) throw new Error(); after = value.sourceId; }
+      catch { throw new Error('Consulta inválida'); }
+    }
+    const page = await this.container.items.query<CatalogItem & { version: number }>({ query: 'SELECT TOP @take c.sourceId, c.itemType, c.name, c.unitPriceInCents, c.active, c.version FROM c WHERE c.filialId = @filialId AND STARTSWITH(c.id, @prefix) AND c.itemType = @itemType AND c.active = true AND c.sourceId > @after ORDER BY c.sourceId ASC', parameters: [{ name: '@take', value: input.limit + 1 }, { name: '@filialId', value: input.filialId }, { name: '@prefix', value: `catalog:${input.itemType}:` }, { name: '@itemType', value: input.itemType }, { name: '@after', value: after }] }, { partitionKey: input.filialId, maxItemCount: input.limit + 1 }).fetchAll();
+    const items = page.resources.slice(0, input.limit);
+    const continuationToken = page.resources.length > input.limit ? Buffer.from(JSON.stringify({ filialId: input.filialId, itemType: input.itemType, sourceId: items[items.length - 1].sourceId })).toString('base64url') : null;
+    return { items, continuationToken };
+  }
+  async deactivateCatalog(filialId: string, itemType: string, sourceId: string): Promise<boolean> {
+    if (!idValid(filialId) || !idValid(sourceId) || !['PART', 'SERVICE'].includes(itemType)) throw new Error('Item inválido');
+    const id = `catalog:${itemType}:${sourceId}`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const item = await this.read(id, filialId); if (!item) return false;
+      if (item.value.sourceId !== sourceId || item.value.itemType !== itemType || typeof item.value.active !== 'boolean' || !Number.isSafeInteger(item.value.version) || Number(item.value.version) < 1) throw new Error('Item persistido inválido');
+      if (!item.value.active) return true;
+      const version = Number(item.value.version) + 1; if (!Number.isSafeInteger(version)) throw new Error('Versão inválida');
+      if (await this.commit([{ operationType: 'Replace', id, ifMatch: item.etag, resourceBody: { ...clean(item.value), active: false, version } }], filialId)) return true;
+    }
+    throw new Error('Conflito de concorrência Cosmos');
+  }
   async putCatalog(filialId: string, item: CatalogItem): Promise<void> {
     if (!idValid(filialId) || !item || !idValid(item.sourceId) || !['PART', 'SERVICE'].includes(item.itemType) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || !Number.isSafeInteger(item.unitPriceInCents) || item.unitPriceInCents < 0 || item.unitPriceInCents > 2147483647 || typeof item.active !== 'boolean') throw new Error('Item inválido');
     const id = `catalog:${item.itemType}:${item.sourceId}`;

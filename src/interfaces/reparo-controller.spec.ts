@@ -45,7 +45,7 @@ describe('consulta e ajuste de estoque', () => {
 });
 
 describe('catálogo e ações de diagnóstico', () => {
-  const work = { diagnosisAction: jest.fn(), putCatalog: jest.fn(), getCatalog: jest.fn() };
+  const work = { diagnosisAction: jest.fn(), putCatalog: jest.fn(), getCatalog: jest.fn(), listCatalog: jest.fn(), deactivateCatalog: jest.fn() };
   const repair = new RepairController(work as unknown as WorkActions);
   const catalog = new CatalogController(work as unknown as WorkActions);
   const body = { sagaId: 's1', filialId: 'f1', correlationId: 'c1' };
@@ -68,5 +68,12 @@ describe('catálogo e ações de diagnóstico', () => {
     await expect(catalog.get('../', 'PART', 'p1')).rejects.toThrow(BadRequestException);
     await expect(catalog.put('f1', 'OTHER', 'p1', value)).rejects.toThrow(BadRequestException);
     await expect(catalog.put('f1', 'PART', 'p1', { ...value, unitPriceInCents: -1 })).rejects.toThrow(BadRequestException);
+  });
+  it('lista itens ativos e desativa logicamente', async () => {
+    work.listCatalog.mockResolvedValue({ items: [], continuationToken: null }); work.deactivateCatalog.mockResolvedValue(true);
+    await expect(catalog.list('f1', 'PART', '10')).resolves.toEqual({ items: [], continuationToken: null });
+    expect(work.listCatalog).toHaveBeenCalledWith({ filialId: 'f1', itemType: 'PART', limit: 10 });
+    await expect(catalog.remove('f1', 'PART', 'p1')).resolves.toEqual({ status: 'INACTIVE' });
+    await expect(catalog.list('f1', 'OTHER')).rejects.toThrow(BadRequestException);
   });
 });

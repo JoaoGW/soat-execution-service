@@ -17,6 +17,10 @@ transacional; uma repetição retorna o resultado original sem reverter ajustes
 posteriores. O teste no emulador não substitui a validação de atomicidade e
 concorrência no Cosmos real.
 
+O catálogo por filial oferece consulta individual, listagem paginada de itens
+ativos, gravação e desativação lógica. O diagnóstico continua usando o snapshot
+de preços já registrado, mesmo quando o catálogo muda depois da conclusão.
+
 Tarefas enfileiradas por versões anteriores podem não ter `queueKey`. Antes de
 ativar a consulta em ambiente com dados existentes, execute por filial
 `QUEUE_BACKFILL_FILIAL=<filial> npm run ops:backfill-queue` com identidade e

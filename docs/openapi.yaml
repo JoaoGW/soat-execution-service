@@ -112,6 +112,16 @@ paths:
                 balance: { type: integer, minimum: 0, maximum: 2147483647 }
                 reason: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
       responses: { '200': { description: Saldo ajustado ou resultado da operação original }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Peça inexistente }, '409': { description: Reserva, chave ou concorrência conflitante }, '503': { description: Banco não configurado } }
+  /catalogo/{filialId}/{itemType}:
+    get:
+      summary: Listar itens ativos do catálogo da filial
+      security: [{ admin: [] }]
+      parameters:
+        - { name: filialId, in: path, required: true, schema: { type: string } }
+        - { name: itemType, in: path, required: true, schema: { type: string, enum: [PART, SERVICE] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: continuationToken, in: query, schema: { type: string, maxLength: 512 } }
+      responses: { '200': { description: Página de itens ativos e cursor opcional }, '400': { description: Parâmetros ou cursor inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
   /catalogo/{filialId}/{itemType}/{sourceId}:
     parameters:
       - { name: filialId, in: path, required: true, schema: { type: string } }
@@ -137,6 +147,10 @@ paths:
                 unitPriceInCents: { type: integer, minimum: 0, maximum: 2147483647 }
                 active: { type: boolean }
       responses: { '200': { description: Item salvo }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+    delete:
+      summary: Desativar item sem apagar seu histórico
+      security: [{ admin: [] }]
+      responses: { '200': { description: Item desativado ou já inativo }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '503': { description: Banco não configurado } }
 components:
   securitySchemes:
     admin: { type: http, scheme: bearer, bearerFormat: JWT }

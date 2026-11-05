@@ -4,6 +4,7 @@ const { CosmosClient } = require('@azure/cosmos');
 const { CosmosQueueQuery } = require('../../dist/infrastructure/cosmos/fila');
 const { BackfillQueueKeys } = require('../../dist/infrastructure/cosmos/backfill-fila');
 const { CosmosStockActions } = require('../../dist/infrastructure/cosmos/estoque');
+const { CosmosDiagnosisActions } = require('../../dist/infrastructure/cosmos/diagnostico-operacoes');
 const endpoint = process.env.COSMOS_TEST_ENDPOINT;
 if (!['http://localhost:8081', 'http://127.0.0.1:8081'].includes(endpoint)) throw Error('Emulador Cosmos local obrigatório');
 const client = new CosmosClient({ endpoint, key: Buffer.from('local-test-key').toString('base64') });
@@ -47,6 +48,16 @@ async function main() {
     await container.item('stock:p1', 'one').replace({ ...item.resource, reserved: 3 });
     await assert.rejects(() => stock.set({ ...input, operationId: 'op3', balance: 2 }), /Saldo menor que o reservado/);
     assert.equal((await stock.get('one', 'p1')).available, 9);
+    const catalog = new CosmosDiagnosisActions(container);
+    await catalog.putCatalog('one', { sourceId: 'p2', itemType: 'PART', name: 'Outra', unitPriceInCents: 200, active: true });
+    await catalog.putCatalog('two', { sourceId: 'p0', itemType: 'PART', name: 'Outra filial', unitPriceInCents: 100, active: true });
+    const catalogFirst = await catalog.listCatalog({ filialId: 'one', itemType: 'PART', limit: 1 });
+    assert.deepEqual(catalogFirst.items.map(item => item.sourceId), ['p1']); assert.ok(catalogFirst.continuationToken);
+    const catalogSecond = await catalog.listCatalog({ filialId: 'one', itemType: 'PART', limit: 1, continuationToken: catalogFirst.continuationToken });
+    assert.deepEqual(catalogSecond.items.map(item => item.sourceId), ['p2']);
+    assert.equal(await catalog.deactivateCatalog('one', 'PART', 'p1'), true);
+    assert.equal((await catalog.getCatalog('one', 'PART', 'p1')).active, false);
+    assert.deepEqual((await catalog.listCatalog({ filialId: 'one', itemType: 'PART', limit: 10 })).items.map(item => item.sourceId), ['p2']);
     process.stdout.write('Cosmos emulado: fila, paginação, backfill e ajuste idempotente de estoque verificados.\n');
   } finally { await database.delete(); }
 }

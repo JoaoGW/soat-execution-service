@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, Headers, Injectable, NotFoundException, OnApplicationShutdown, Param, Post, Put, Query, Req, ServiceUnavailableException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, Get, Headers, Injectable, NotFoundException, OnApplicationShutdown, Param, Post, Put, Query, Req, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { CosmosClient } from '@azure/cosmos';
 import { WorkloadIdentityCredential } from '@azure/identity';
 import { CosmosWorkStore, WorkAction } from '../infrastructure/cosmos/reparo';
@@ -34,6 +34,8 @@ export class WorkActions implements OnApplicationShutdown {
   }
   async putCatalog(filialId: string, item: CatalogItem) { this.getStore(); return this.diagnosis!.putCatalog(filialId, item); }
   async getCatalog(filialId: string, itemType: string, sourceId: string) { this.getStore(); return this.diagnosis!.getCatalog(filialId, itemType, sourceId); }
+  async listCatalog(input: { filialId: string; itemType: string; limit: number; continuationToken?: string }) { this.getStore(); return this.diagnosis!.listCatalog(input); }
+  async deactivateCatalog(filialId: string, itemType: string, sourceId: string) { this.getStore(); return this.diagnosis!.deactivateCatalog(filialId, itemType, sourceId); }
   async listQueue(input: { filialId: string; limit: number; continuationToken?: string }) { this.getStore(); return this.queue!.execute(input); }
   async getStock(filialId: string, sku: string) { this.getStore(); return this.stock!.get(filialId, sku); }
   async setStock(input: { filialId: string; sku: string; balance: number; operationId: string; actorId: string; reason: string }) { this.getStore(); return this.stock!.set(input); }
@@ -104,6 +106,12 @@ export class RepairController {
 @UseGuards(AdminGuard)
 export class CatalogController {
   constructor(private readonly work: WorkActions) {}
+  @Get(':filialId/:itemType')
+  async list(@Param('filialId') filialId: string, @Param('itemType') itemType: string, @Query('limit') limit?: string, @Query('continuationToken') continuationToken?: string) {
+    if (typeof filialId !== 'string' || !/^[a-z0-9_-]{1,128}$/i.test(filialId) || !['PART', 'SERVICE'].includes(itemType) || (limit !== undefined && (typeof limit !== 'string' || !/^(?:[1-9]|[1-9][0-9]|100)$/.test(limit))) || (continuationToken !== undefined && (typeof continuationToken !== 'string' || !/^[a-z0-9_-]{1,512}$/i.test(continuationToken)))) throw new BadRequestException('Consulta inválida');
+    try { return await this.work.listCatalog({ filialId, itemType, limit: limit === undefined ? 20 : Number(limit), ...(continuationToken ? { continuationToken } : {}) }); }
+    catch (error) { if (error instanceof Error && error.message === 'Consulta inválida') throw new BadRequestException('Consulta inválida'); throw error; }
+  }
   @Get(':filialId/:itemType/:sourceId')
   async get(@Param('filialId') filialId: string, @Param('itemType') itemType: string, @Param('sourceId') sourceId: string) {
     if (!/^[a-z0-9_-]{1,128}$/i.test(filialId) || !/^[a-z0-9_-]{1,128}$/i.test(sourceId) || !['PART', 'SERVICE'].includes(itemType)) throw new BadRequestException('Item inválido');
@@ -116,5 +124,11 @@ export class CatalogController {
     if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['name', 'unitPriceInCents', 'active'].includes(key)) || !/^[a-z0-9_-]{1,128}$/i.test(filialId) || !/^[a-z0-9_-]{1,128}$/i.test(sourceId) || !['PART', 'SERVICE'].includes(itemType) || typeof body.name !== 'string' || !body.name.trim() || body.name.length > 200 || !Number.isSafeInteger(body.unitPriceInCents) || body.unitPriceInCents < 0 || body.unitPriceInCents > 2147483647 || typeof body.active !== 'boolean') throw new BadRequestException('Item inválido');
     await this.work.putCatalog(filialId, { sourceId, itemType: itemType as CatalogItem['itemType'], name: body.name, unitPriceInCents: body.unitPriceInCents, active: body.active });
     return { status: 'SAVED' };
+  }
+  @Delete(':filialId/:itemType/:sourceId')
+  async remove(@Param('filialId') filialId: string, @Param('itemType') itemType: string, @Param('sourceId') sourceId: string) {
+    if (![filialId, sourceId].every(value => typeof value === 'string' && /^[a-z0-9_-]{1,128}$/i.test(value)) || !['PART', 'SERVICE'].includes(itemType)) throw new BadRequestException('Item inválido');
+    if (!await this.work.deactivateCatalog(filialId, itemType, sourceId)) throw new NotFoundException();
+    return { status: 'INACTIVE' };
   }
 }

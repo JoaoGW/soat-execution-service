@@ -85,4 +85,26 @@ describe('diagnóstico com snapshot', () => {
     expect([500, 900]).toContain((result?.items as Array<{ unitPriceInCents: number }>)[0].unitPriceInCents);
     expect(fake.list('outbox:')).toHaveLength(2);
   });
+  it('desativa logicamente uma única vez e não permite novo diagnóstico com o item', async () => {
+    await store.putCatalog('f1', { sourceId: 'p1', itemType: 'PART', name: 'Peça', unitPriceInCents: 500, active: true });
+    expect(await store.deactivateCatalog('f1', 'PART', 'missing')).toBe(false);
+    expect(await store.deactivateCatalog('f1', 'PART', 'p1')).toBe(true);
+    expect(await store.deactivateCatalog('f1', 'PART', 'p1')).toBe(true);
+    expect(await store.getCatalog('f1', 'PART', 'p1')).toMatchObject({ active: false, version: 2 });
+    await store.apply('start', input);
+    await expect(store.apply('complete', { ...input, operationId: 'done', items: [{ sourceId: 'p1', itemType: 'PART', quantity: 1 }] })).rejects.toThrow('indisponível');
+  });
+});
+
+describe('listagem do catálogo', () => {
+  it('restringe filial e tipo, valida cursor e pagina resultados ativos', async () => {
+    const fetchAll = jest.fn().mockResolvedValue({ resources: [{ sourceId: 'a', itemType: 'PART' }, { sourceId: 'b', itemType: 'PART' }] });
+    const query = jest.fn().mockReturnValue({ fetchAll });
+    const store = new CosmosDiagnosisActions({ items: { query } } as unknown as Container);
+    const first = await store.listCatalog({ filialId: 'f1', itemType: 'PART', limit: 1 });
+    expect(first.items).toEqual([{ sourceId: 'a', itemType: 'PART' }]); expect(first.continuationToken).toBeTruthy();
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ parameters: expect.arrayContaining([{ name: '@filialId', value: 'f1' }, { name: '@itemType', value: 'PART' }]) }), { partitionKey: 'f1', maxItemCount: 2 });
+    await expect(store.listCatalog({ filialId: 'other', itemType: 'PART', limit: 1, continuationToken: first.continuationToken! })).rejects.toThrow('Consulta inválida');
+    await expect(store.listCatalog({ filialId: 'f1', itemType: 'SERVICE', limit: 1, continuationToken: first.continuationToken! })).rejects.toThrow('Consulta inválida');
+  });
 });
