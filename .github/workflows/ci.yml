@@ -23,6 +23,13 @@ jobs:
       - run: npm run test:coverage-infrastructure -- --watchman=false
       - run: npm run test:contracts
       - run: npm run test:delivery
+      - name: Verificar imagem e trava da recuperação
+        run: |
+          docker build -t execution-ci:${{ github.sha }} .
+          if output="$(docker run --rm --entrypoint node execution-ci:${{ github.sha }} scripts/operations/recover-outbox.cjs 2>&1)"; then
+            echo 'Recuperação não deveria executar sem habilitação'; exit 1
+          fi
+          [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta ausente ou inválida'; exit 1; }
       - run: kubectl kustomize deploy/kustomize/overlays/hml > /tmp/service-hml.yaml
       - uses: actions/upload-artifact@v4
         with:

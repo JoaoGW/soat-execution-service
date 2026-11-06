@@ -106,10 +106,9 @@ real de atomicidade, concorrência ou limites do Cosmos. Os workers de comandos 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
 `npm run test:contracts`.
 
-Pendentes: validar Cosmos e identidade com infraestrutura real, integrar
-reconciliação e compensação à Saga, CRUD completo e listagem do catálogo,
-Sonar, deploy automatizado,
-observabilidade e testes distribuídos.
+Pendentes: validar Cosmos e identidade com infraestrutura real, completar
+casos de reconciliação e o gate de qualidade, e comprovar deploy e observabilidade
+no ambiente de aceite. Os testes distribuídos locais usam emuladores.
 
 O worker da outbox só inicia com `ENABLE_EXECUTION_OUTBOX=true` e exige
 `COSMOS_ENDPOINT`, `COSMOS_DATABASE`, `COSMOS_CONTAINER`,
@@ -119,6 +118,8 @@ publicação no topic. Ele usa lease e ETag, retenta cinco vezes e mantém event
 em `FAILED` para intervenção. A publicação é pelo menos uma vez: após falha de
 confirmação, o mesmo `messageId` pode ser enviado novamente. Nenhum serviço real
 é contatado se o worker estiver desativado; a integração real permanece pendente.
+O [procedimento de recuperação](docs/recuperacao-outbox.md) permite rearmar
+eventos próprios `FAILED`, com auditoria transacional na mesma partição.
 
 O consumidor exige `ENABLE_EXECUTION_COMMANDS=true`, a configuração do Cosmos,
 da fila Service Bus e a identidade de workload. A ligação real e o isolamento

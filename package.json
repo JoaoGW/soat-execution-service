@@ -22,6 +22,7 @@
     "test:observability-local": "node scripts/integration/observability-local.cjs",
     "test:cosmos-queue": "node scripts/integration/fila-cosmos.cjs",
     "ops:backfill-queue": "node scripts/operations/backfill-fila.cjs",
+    "ops:recover-outbox": "node scripts/operations/recover-outbox.cjs",
     "start:prod": "node dist/main.js"
   },
   "dependencies": {
