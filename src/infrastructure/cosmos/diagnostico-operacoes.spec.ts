@@ -70,6 +70,12 @@ describe('diagnóstico com snapshot', () => {
     }
     await expect(store.apply('complete', { ...done, items: [{ ...done.items[0], quantity: 3 }] })).rejects.toThrow('Operação reutilizada');
   });
+  it('preserva contexto da solicitação nos eventos duráveis de diagnóstico', async () => {
+    const traceparent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01';
+    fake.seed({ id: 'diagnosis:os1', filialId: 'f1', osId: 'os1', sagaId: 's1', status: 'PENDING', version: 1, traceparent, tracestate: 'vendor=state' });
+    await store.apply('start', input);
+    expect(fake.list('outbox:')[0].payload).toMatchObject({ traceparent, tracestate: 'vendor=state' });
+  });
   it('bloqueia conclusão sem item ativo e após cancelamento', async () => {
     await store.apply('start', input);
     await expect(store.apply('complete', { ...input, operationId: 'done', items: [{ sourceId: 'p1', itemType: 'PART', quantity: 1 }] })).rejects.toThrow('indisponível');

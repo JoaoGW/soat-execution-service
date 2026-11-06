@@ -6,6 +6,7 @@ import { AdminGuard } from './admin-guard';
 import { CatalogItem, CosmosDiagnosisActions, Selection } from '../infrastructure/cosmos/diagnostico-operacoes';
 import { CosmosQueueQuery } from '../infrastructure/cosmos/fila';
 import { CosmosStockActions } from '../infrastructure/cosmos/estoque';
+import { captureTrace } from '../infrastructure/observability/trace-context';
 
 @Injectable()
 export class WorkActions implements OnApplicationShutdown {
@@ -64,7 +65,7 @@ function action(osId: string, operationId: string | undefined, body: ActionBody)
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['sagaId', 'filialId', 'executionId', 'correlationId'].includes(key))) throw new BadRequestException('Corpo inválido');
   const ids = [osId, operationId, body.sagaId, body.filialId, body.executionId, ...(body.correlationId === undefined ? [] : [body.correlationId])];
   if (ids.some((id) => typeof id !== 'string' || !/^[a-z0-9_-]{1,128}$/i.test(id))) throw new BadRequestException('Identificadores inválidos');
-  return { osId, sagaId: body.sagaId, filialId: body.filialId, executionId: body.executionId, operationId: operationId as string, messageId: operationId as string, correlationId: body.correlationId ?? (operationId as string) };
+  return { osId, sagaId: body.sagaId, filialId: body.filialId, executionId: body.executionId, operationId: operationId as string, messageId: operationId as string, correlationId: body.correlationId ?? (operationId as string), ...captureTrace() };
 }
 
 @Controller('execucoes')

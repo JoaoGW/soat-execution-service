@@ -13,6 +13,7 @@ import { ReleaseCommandConsumer, createReleaseValidator } from './release-consum
 import { ReserveCommandConsumer, createReserveValidator } from './reserve-consumer';
 import { EnqueueCommandConsumer, createEnqueueValidator } from './enqueue-consumer';
 import { MessageVerifier } from './message-signature';
+import { withMessageTrace } from '../observability/message-trace';
 
 /** Disabled by default; unsupported commands remain unacknowledged. */
 @Injectable()
@@ -50,6 +51,7 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
         if (!verifier.verify(body, message.applicationProperties?.signature)) {
           await receiver.deadLetterMessage(message, { deadLetterReason: 'UnauthenticatedProducer', deadLetterErrorDescription: 'Assinatura inválida' }); return;
         }
+        return withMessageTrace(body, async () => {
         const type = body && typeof body === 'object' && 'type' in body ? body.type : undefined;
         if (type === 'execution.reserve-parts.v1') return reserve.process(message, receiver);
         if (type === 'execution.enqueue-work.v1') return enqueue.process(message, receiver);
@@ -59,6 +61,7 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
         // The broker may eventually send unsupported commands to the DLQ; do not claim success.
         this.logger.warn('Comando ainda não suportado; permanecem necessárias outras etapas de Execution');
         await receiver.abandonMessage(message);
+        });
       },
       processError: async (args) => { this.logger.error(`Falha no transporte Service Bus: ${args.errorSource}`); },
     }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });

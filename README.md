@@ -1,5 +1,15 @@
 # Execution Service — Fase 4
 
+O CI prepara publicação e deploy em HML somente para `push` em `development`
+após qualidade do mesmo SHA. A variável de repositório `HML_DEPLOY_ENABLED`
+deve ser `true`; ausente ou diferente de `true`, nenhuma imagem é publicada e
+nenhum deploy ocorre. O ambiente `hml` deve fornecer OIDC (`AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), nomes do AKS e
+`EXECUTION_WORKLOAD_CLIENT_ID`. O namespace precisa dos secrets
+`soat-ghcr-pull` e `soat-execution-runtime`, provisionados de forma segura pelo
+ambiente, por exemplo com sincronização do Key Vault. O fluxo ainda precisa de
+ensaio no cluster autorizado.
+
 Execution é responsável por catálogo, estoque, diagnóstico, fila e reparo. Seu
 Cosmos DB é exclusivo do serviço e as operações transacionais usam a partição
 da filial. O OS coordena uma **Saga orquestrada** por comandos e eventos
@@ -24,6 +34,9 @@ verifica 80% por métrica no serviço e, separadamente, na infraestrutura com
 `npm run test:coverage-infrastructure`; os relatórios são publicados como
 artefatos identificados pelo SHA da execução. O repositório é privado e exige
 permissão para consultar essas evidências.
+O CI executa `npm run quality:sonarjs` com regras selecionadas de lógica e
+segurança da SonarSource. Esse gate local não substitui todos os recursos do
+SonarQube nem seu painel.
 
 Traces e métricas OpenTelemetry são opcionais: defina `OBSERVABILITY_ENABLED=true`
 e `NEW_RELIC_LICENSE_KEY` no secret do ambiente; `OTEL_SERVICE_VERSION` deve

@@ -14,6 +14,11 @@ describe('consumidor de diagnóstico', () => {
   it('valida contrato e só confirma após persistir', async () => {
     await deliver(body); expect(store.request).toHaveBeenCalledWith(expect.objectContaining({ veiculoId: 'veiculo-001' })); expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
   });
+  it('persiste contexto W3C junto à solicitação autenticada', async () => {
+    const traceparent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01';
+    await deliver({ ...body, traceparent, tracestate: 'vendor=state' });
+    expect(store.request).toHaveBeenCalledWith(expect.objectContaining({ traceparent, tracestate: 'vendor=state' }));
+  });
   it('rejeita contrato inválido e não confirma erro de persistência', async () => {
     await deliver(body, 'wrong'); expect(receiver.deadLetterMessage).toHaveBeenCalledTimes(1);
     store.request.mockRejectedValue(new Error('falha')); await deliver(body); expect(receiver.abandonMessage).toHaveBeenCalledTimes(1); expect(receiver.completeMessage).not.toHaveBeenCalled();

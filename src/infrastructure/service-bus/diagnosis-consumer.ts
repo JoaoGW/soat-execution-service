@@ -23,7 +23,7 @@ export class DiagnosisCommandConsumer {
     }
     const event = body as Envelope;
     try {
-      await this.store.request({ messageId: event.messageId, operationId: event.operationId, osId: event.osId, sagaId: event.sagaId, filialId: event.filialId, correlationId: event.correlationId, veiculoId: event.data.veiculoId, ...(event.data.solicitacoes ? { solicitacoes: event.data.solicitacoes } : {}) });
+      await this.store.request({ messageId: event.messageId, operationId: event.operationId, osId: event.osId, sagaId: event.sagaId, filialId: event.filialId, correlationId: event.correlationId, veiculoId: event.data.veiculoId, ...(event.traceparent ? { traceparent: event.traceparent } : {}), ...(event.tracestate ? { tracestate: event.tracestate } : {}), ...(event.data.solicitacoes ? { solicitacoes: event.data.solicitacoes } : {}) });
     } catch { await receiver.abandonMessage(message); return; }
     await receiver.completeMessage(message);
   }

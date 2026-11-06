@@ -4,6 +4,7 @@ import { Container, ItemDefinition, OperationInput } from '@azure/cosmos';
 export interface RequestDiagnosis {
   messageId: string; operationId: string; osId: string; sagaId: string; filialId: string;
   correlationId: string; veiculoId: string; solicitacoes?: string[];
+  traceparent?: string; tracestate?: string;
 }
 type Stored<T> = { value: T; etag: string };
 type RecordDoc = ItemDefinition & { hash: string; operationId?: string };
@@ -58,7 +59,7 @@ export class CosmosDiagnosisStore {
       const gateBody = { id: gateId, filialId: input.filialId, cancelled: false };
       const operations: OperationInput[] = [
         gate ? { operationType: 'Replace', id: gateId, ifMatch: gate.etag, resourceBody: gateBody } : { operationType: 'Create', resourceBody: gateBody },
-        { operationType: 'Create', resourceBody: { id: diagnosisId, filialId: input.filialId, osId: input.osId, sagaId: input.sagaId, veiculoId: input.veiculoId, solicitacoes: input.solicitacoes ?? [], correlationId: input.correlationId, status: 'PENDING', version: 1, createdAt: now.toISOString() } },
+        { operationType: 'Create', resourceBody: { id: diagnosisId, filialId: input.filialId, osId: input.osId, sagaId: input.sagaId, veiculoId: input.veiculoId, solicitacoes: input.solicitacoes ?? [], correlationId: input.correlationId, ...(input.traceparent ? { traceparent: input.traceparent } : {}), ...(input.tracestate ? { tracestate: input.tracestate } : {}), status: 'PENDING', version: 1, createdAt: now.toISOString() } },
         { operationType: 'Create', resourceBody: { id: operationId, filialId: input.filialId, hash } },
         { operationType: 'Create', resourceBody: { id: inboxId, filialId: input.filialId, operationId: input.operationId, hash } },
       ];
