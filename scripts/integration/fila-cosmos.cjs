@@ -17,6 +17,7 @@ const { BackfillQueueKeys } = require('../../dist/infrastructure/cosmos/backfill
 const { CosmosStockActions } = require('../../dist/infrastructure/cosmos/estoque');
 const { CosmosDiagnosisActions } = require('../../dist/infrastructure/cosmos/diagnostico-operacoes');
 const { RecoverExecutionOutbox } = require('../../dist/infrastructure/cosmos/recover-outbox');
+const { CosmosOutboxDispatcher } = require('../../dist/infrastructure/cosmos/outbox');
 const endpoint = process.env.COSMOS_TEST_ENDPOINT;
 if (!['http://localhost:8081', 'http://127.0.0.1:8081'].includes(endpoint)) throw Error('Emulador Cosmos local obrigatório');
 const client = new CosmosClient({ endpoint, key: Buffer.from('local-test-key').toString('base64') });
@@ -96,6 +97,10 @@ async function main() {
     const audit = await container.items.query({ query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @prefix) AND c.messageId = @id', parameters: [{ name: '@prefix', value: 'recovery:' }, { name: '@id', value: original.messageId }] }, { partitionKey: 'one' }).fetchAll();
     assert.equal(audit.resources.length, 1); assert.equal(audit.resources[0].actor, 'operator');
     await assert.rejects(() => recover.execute(recoveryInput));
+    const sent = [];
+    assert.equal(await new CosmosOutboxDispatcher(container, { publish: async event => { sent.push(event); } }).dispatchOne(), 'SENT');
+    assert.deepEqual(sent, [{ messageId: original.messageId, payload: original }]);
+    assert.equal((await container.item('outbox:recovery-msg', 'one').read()).resource.status, 'SENT');
     const invalid = { ...original, messageId: 'invalid-recovery', data: { ...original.data, outcome: 'INVALID' } };
     await container.items.create({ id: 'outbox:invalid-recovery', filialId: 'one', messageId: invalid.messageId, status: 'FAILED', payload: invalid, createdAt: new Date().toISOString() });
     await assert.rejects(() => recover.execute({ ...recoveryInput, messageId: invalid.messageId }), /Contrato/);
@@ -126,7 +131,7 @@ async function main() {
       if (previousSecret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = previousSecret;
       if (previousClientSecret === undefined) delete process.env.JWT_CLIENT_SECRET; else process.env.JWT_CLIENT_SECRET = previousClientSecret;
     }
-    process.stdout.write('Cosmos emulado: fila, paginação, backfill, estoque e contratos HTTP autenticados verificados.\n');
+    process.stdout.write('Cosmos emulado: fila, estoque, contratos HTTP e recuperação com publicação simulada verificados.\n');
   } finally { await database.delete(); }
 }
 main().finally(() => client.dispose()).catch((error) => { console.error(error.stack || error); process.exitCode = 1; });
