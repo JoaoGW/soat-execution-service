@@ -151,3 +151,12 @@ Execution em `EXECUTION_MESSAGE_PRIVATE_KEY`; eventos são assinados e comandos
 sem assinatura válida seguem à DLQ antes do processamento. Não compartilhe
 chaves privadas entre serviços. Distribuição e rotação das chaves ainda precisam
 ser configuradas e testadas no ambiente real.
+
+## Dependência temporariamente sobrescrita
+
+O `package-lock.json` fixa Multer 2.5.0 por `overrides` para corrigir o aviso
+GHSA-q7qp-rjg7-q26m na versão transitiva fixada pelo Nest. O teste de
+compatibilidade exercita o interceptor HTTP do Nest com filtro assíncrono; ele
+não reproduz todas as condições do aviso. Remova o override quando uma versão
+compatível do Nest incorporar a correção e valide novamente build, testes e
+auditoria. A atualização para Nest 12 também exige adaptar o Jest a módulos ESM.
