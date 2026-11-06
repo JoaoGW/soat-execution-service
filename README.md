@@ -1,5 +1,19 @@
 # Execution Service — Fase 4
 
+O [CI de Execution](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml)
+verifica 80% por métrica no serviço e, separadamente, na infraestrutura com
+`npm run test:coverage-infrastructure`; os relatórios são publicados como
+artefatos identificados pelo SHA da execução. O repositório é privado e exige
+permissão para consultar essas evidências.
+
+Traces e métricas OpenTelemetry são opcionais: defina `OBSERVABILITY_ENABLED=true`
+e `NEW_RELIC_LICENSE_KEY` no secret do ambiente; `OTEL_SERVICE_VERSION` deve
+receber o SHA e `OTEL_EXPORTER_OTLP_ENDPOINT` pode apontar ao coletor HTTPS.
+A aplicação inicializa a instrumentação antes do Nest e encerra o SDK no
+shutdown. `npm run build && npm run test:observability-local` verifica a
+exportação para coletor local sem credenciais externas. A validação do trace
+distribuído no New Relic continua dependente do ambiente e da configuração.
+
 `GET /execucoes/fila?filialId=...&limit=20` exige JWT administrativo e lista
 trabalhos `QUEUED` daquela filial em ordem de entrada, com no máximo 100 itens.
 A resposta inclui `continuationToken` para a próxima página; o cursor pertence
