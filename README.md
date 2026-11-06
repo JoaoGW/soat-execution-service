@@ -7,6 +7,8 @@ assinados. Execution reserva peças após aprovação e só inicia o reparo apó
 comando vinculado ao pagamento confirmado. Na compensação, confirma o
 cancelamento antes de qualquer liberação; se o trabalho físico começou, a
 ocorrência segue para reconciliação e não há rollback físico fictício.
+A orquestração no OS concentra prazos, decisões e a ordem das compensações,
+facilitando auditoria e retomada sem compartilhar o banco de execução.
 
 ```mermaid
 flowchart LR
