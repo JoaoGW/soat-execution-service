@@ -96,7 +96,7 @@ paths:
     get:
       summary: Consultar saldo, reservado e disponível de uma peça na filial
       security: [{ admin: [] }]
-      responses: { '200': { description: Estoque encontrado }, '400': { description: Identificador inválido }, '401': { description: JWT inválido }, '404': { description: Estoque inexistente }, '503': { description: Banco não configurado } }
+      responses: { '200': { $ref: '#/components/responses/Stock' }, '400': { description: Identificador inválido }, '401': { description: JWT inválido }, '404': { description: Estoque inexistente }, '503': { description: Banco não configurado } }
     put:
       summary: Ajustar saldo absoluto sem reduzir abaixo das reservas
       security: [{ admin: [] }]
@@ -112,7 +112,7 @@ paths:
               properties:
                 balance: { type: integer, minimum: 0, maximum: 2147483647 }
                 reason: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
-      responses: { '200': { description: Saldo ajustado ou resultado da operação original }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Peça inexistente }, '409': { description: Reserva, chave ou concorrência conflitante }, '503': { description: Banco não configurado } }
+      responses: { '200': { $ref: '#/components/responses/Stock' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Peça inexistente }, '409': { description: Reserva, chave ou concorrência conflitante }, '503': { description: Banco não configurado } }
   /catalogo/{filialId}/{itemType}:
     get:
       summary: Listar itens ativos do catálogo da filial
@@ -122,7 +122,7 @@ paths:
         - { name: itemType, in: path, required: true, schema: { type: string, enum: [PART, SERVICE] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: continuationToken, in: query, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,512}$' } }
-      responses: { '200': { description: Página de itens ativos e cursor opcional }, '400': { description: Parâmetros ou cursor inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+      responses: { '200': { $ref: '#/components/responses/CatalogPage' }, '400': { description: Parâmetros ou cursor inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
   /catalogo/{filialId}/{itemType}/{sourceId}:
     parameters:
       - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
@@ -131,7 +131,7 @@ paths:
     get:
       summary: Consultar item do catálogo da filial
       security: [{ admin: [] }]
-      responses: { '200': { description: Item encontrado }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '503': { description: Banco não configurado } }
+      responses: { '200': { $ref: '#/components/responses/CatalogItem' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '503': { description: Banco não configurado } }
     put:
       summary: Criar ou atualizar item do catálogo da filial
       security: [{ admin: [] }]
@@ -159,6 +159,31 @@ components:
     OsId: { name: osId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
     IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
   schemas:
+    Stock:
+      type: object
+      required: [sku, filialId, balance, reserved, available]
+      properties:
+        sku: { type: string }
+        filialId: { type: string }
+        balance: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        available: { type: integer, minimum: 0 }
+    CatalogItem:
+      type: object
+      required: [sourceId, itemType, name, unitPriceInCents, active, version]
+      properties:
+        sourceId: { type: string }
+        itemType: { type: string, enum: [PART, SERVICE] }
+        name: { type: string }
+        unitPriceInCents: { type: integer, minimum: 0 }
+        active: { type: boolean }
+        version: { type: integer, minimum: 1 }
+    CatalogPage:
+      type: object
+      required: [items, continuationToken]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CatalogItem' } }
+        continuationToken: { type: string, nullable: true }
     DiagnosisAction:
       type: object
       required: [sagaId, filialId]
@@ -179,3 +204,13 @@ components:
     WorkAction:
       required: true
       content: { application/json: { schema: { $ref: '#/components/schemas/WorkAction' } } }
+  responses:
+    Stock:
+      description: Saldo atual, quantidade reservada e quantidade disponível.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Stock' } } }
+    CatalogItem:
+      description: Item versionado do catálogo.
+      content: { application/json: { schema: { $ref: '#/components/schemas/CatalogItem' } } }
+    CatalogPage:
+      description: Página de itens ativos e cursor para a próxima página, quando existir.
+      content: { application/json: { schema: { $ref: '#/components/schemas/CatalogPage' } } }

@@ -51,7 +51,9 @@ trabalhos `QUEUED` daquela filial em ordem de entrada, com no máximo 100 itens.
 A resposta inclui `continuationToken` para a próxima página; o cursor pertence
 à mesma filial. O teste `npm run test:cosmos-queue` exige
 `COSMOS_TEST_ENDPOINT=http://127.0.0.1:8081` e usa um banco temporário no
-emulador. A indexação do caminho `queueKey` é necessária no Cosmos real.
+emulador. Ele também consulta estoque e catálogo pelas rotas HTTP com JWT
+administrativo e valida as respostas contra o OpenAPI. A indexação do caminho
+`queueKey` é necessária no Cosmos real.
 A referência REST das rotas implementadas está em [docs/openapi.yaml](docs/openapi.yaml).
 
 `GET /estoque/:filialId/:sku` consulta saldo, reservado e disponível; o
