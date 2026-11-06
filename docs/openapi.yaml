@@ -16,7 +16,7 @@ paths:
       parameters:
         - { name: filialId, in: query, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: continuationToken, in: query, schema: { type: string, maxLength: 512 } }
+        - { name: continuationToken, in: query, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,512}$' } }
       responses:
         '200':
           description: Página de tarefas, sem dados financeiros
@@ -82,16 +82,17 @@ paths:
                       maxItems: 20
                       items:
                         type: object
+                        additionalProperties: false
                         required: [sourceId, itemType, quantity]
                         properties:
-                          sourceId: { type: string }
+                          sourceId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
                           itemType: { type: string, enum: [PART, SERVICE] }
                           quantity: { type: integer, minimum: 1, maximum: 100000 }
       responses: { '201': { description: Diagnóstico concluído }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
   /estoque/{filialId}/{sku}:
     parameters:
-      - { name: filialId, in: path, required: true, schema: { type: string } }
-      - { name: sku, in: path, required: true, schema: { type: string } }
+      - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+      - { name: sku, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
     get:
       summary: Consultar saldo, reservado e disponível de uma peça na filial
       security: [{ admin: [] }]
@@ -117,16 +118,16 @@ paths:
       summary: Listar itens ativos do catálogo da filial
       security: [{ admin: [] }]
       parameters:
-        - { name: filialId, in: path, required: true, schema: { type: string } }
+        - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
         - { name: itemType, in: path, required: true, schema: { type: string, enum: [PART, SERVICE] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: continuationToken, in: query, schema: { type: string, maxLength: 512 } }
+        - { name: continuationToken, in: query, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,512}$' } }
       responses: { '200': { description: Página de itens ativos e cursor opcional }, '400': { description: Parâmetros ou cursor inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
   /catalogo/{filialId}/{itemType}/{sourceId}:
     parameters:
-      - { name: filialId, in: path, required: true, schema: { type: string } }
+      - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
       - { name: itemType, in: path, required: true, schema: { type: string, enum: [PART, SERVICE] } }
-      - { name: sourceId, in: path, required: true, schema: { type: string } }
+      - { name: sourceId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
     get:
       summary: Consultar item do catálogo da filial
       security: [{ admin: [] }]
@@ -155,22 +156,22 @@ components:
   securitySchemes:
     admin: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
-    OsId: { name: osId, in: path, required: true, schema: { type: string } }
-    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 128 } }
+    OsId: { name: osId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
   schemas:
     DiagnosisAction:
       type: object
       required: [sagaId, filialId]
       properties:
-        sagaId: { type: string }
-        filialId: { type: string }
-        correlationId: { type: string }
+        sagaId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+        filialId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+        correlationId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
     WorkAction:
       allOf:
         - { $ref: '#/components/schemas/DiagnosisAction' }
         - type: object
           required: [executionId]
-          properties: { executionId: { type: string } }
+          properties: { executionId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
   requestBodies:
     DiagnosisAction:
       required: true
