@@ -1,5 +1,22 @@
 # Execution Service — Fase 4
 
+Execution é responsável por catálogo, estoque, diagnóstico, fila e reparo. Seu
+Cosmos DB é exclusivo do serviço e as operações transacionais usam a partição
+da filial. O OS coordena uma **Saga orquestrada** por comandos e eventos
+assinados. Execution reserva peças após aprovação e só inicia o reparo após
+comando vinculado ao pagamento confirmado. Na compensação, confirma o
+cancelamento antes de qualquer liberação; se o trabalho físico começou, a
+ocorrência segue para reconciliação e não há rollback físico fictício.
+
+```mermaid
+flowchart LR
+  OS[OS: orquestrador] -->|comandos| Broker[Service Bus]
+  Broker --> Execution[Execution]
+  Execution --> Cosmos[(Cosmos DB)]
+  Execution -->|eventos| Broker
+  Broker --> OS
+```
+
 O [CI de Execution](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml)
 verifica 80% por métrica no serviço e, separadamente, na infraestrutura com
 `npm run test:coverage-infrastructure`; os relatórios são publicados como
