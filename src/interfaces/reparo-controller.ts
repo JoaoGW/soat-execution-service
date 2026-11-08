@@ -1,6 +1,6 @@
 import { BadRequestException, Body, ConflictException, Controller, Delete, Get, Headers, Injectable, NotFoundException, OnApplicationShutdown, Param, Post, Put, Query, Req, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { CosmosClient } from '@azure/cosmos';
-import { WorkloadIdentityCredential } from '@azure/identity';
+import { cosmosConfigured, createCosmosClient } from '../infrastructure/azure-clients';
 import { CosmosWorkStore, WorkAction } from '../infrastructure/cosmos/reparo';
 import { AdminGuard } from './admin-guard';
 import { CatalogItem, CosmosDiagnosisActions, Selection } from '../infrastructure/cosmos/diagnostico-operacoes';
@@ -18,8 +18,8 @@ export class WorkActions implements OnApplicationShutdown {
   private getStore(): CosmosWorkStore {
     if (this.store) return this.store;
     const endpoint = process.env.COSMOS_ENDPOINT; const database = process.env.COSMOS_DATABASE; const container = process.env.COSMOS_CONTAINER;
-    if (!endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container || !process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) throw new ServiceUnavailableException('Execution não configurado');
-    this.client = new CosmosClient({ endpoint, aadCredentials: new WorkloadIdentityCredential() });
+    if (!cosmosConfigured(endpoint) || !database || !container) throw new ServiceUnavailableException('Execution não configurado');
+    this.client = createCosmosClient(endpoint);
     const operations = this.client.database(database).container(container);
     this.store = new CosmosWorkStore(operations);
     this.diagnosis = new CosmosDiagnosisActions(operations);

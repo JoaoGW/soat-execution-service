@@ -92,6 +92,15 @@ Cosmos. Tarefas de versões anteriores sem `queueKey` são corrigidas por filial
 com `QUEUE_BACKFILL_FILIAL=<filial> npm run ops:backfill-queue` (inspeção) e
 `-- --apply` (gravação com ETag).
 
+## Ambiente local com emuladores
+
+Com `ALLOW_LOCAL_EMULATORS=true`, os workers e as rotas aceitam o Cosmos DB
+Emulator com `COSMOS_KEY` e o Service Bus Emulator com
+`SERVICE_BUS_CONNECTION_STRING` (somente com `UseDevelopmentEmulator=true`). Sem
+a trava, o acesso continua exclusivo por identidade de workload. O ambiente
+completo dos três serviços em kind está em
+[soat-api/docs/ambiente-kind.md](https://github.com/JoaoGW/soat-api/blob/development/docs/ambiente-kind.md).
+
 ## Execução e testes
 
 Com Node 24:

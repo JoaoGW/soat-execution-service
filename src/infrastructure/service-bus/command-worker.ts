@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { CosmosClient } from '@azure/cosmos';
-import { WorkloadIdentityCredential } from '@azure/identity';
+import { cosmosConfigured, createWorkerClients, serviceBusConfigured } from '../azure-clients';
 import { ServiceBusClient, ServiceBusReceiver } from '@azure/service-bus';
 import { resolve } from 'node:path';
 import { CosmosReservationStore } from '../cosmos/reservas';
@@ -29,15 +29,11 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
     const endpoint = process.env.COSMOS_ENDPOINT; const database = process.env.COSMOS_DATABASE; const container = process.env.COSMOS_CONTAINER;
     const namespace = process.env.SERVICE_BUS_NAMESPACE; const queue = process.env.SERVICE_BUS_COMMAND_QUEUE;
     const osKey = process.env.OS_MESSAGE_PUBLIC_KEY;
-    if (!osKey || !endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container ||
-        !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) || !queue ||
-        !process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) throw new Error('Configuração incompleta do worker de comandos');
+    if (!osKey || !cosmosConfigured(endpoint) || !database || !container || !serviceBusConfigured(namespace) || !queue) throw new Error('Configuração incompleta do worker de comandos');
     const verifier = new MessageVerifier(osKey, 'soat-os-service');
     const directory = resolve(process.cwd(), 'docs/contracts/messages');
     const reserveValidator = createReserveValidator(directory); const enqueueValidator = createEnqueueValidator(directory); const cancelValidator = createCancelValidator(directory); const releaseValidator = createReleaseValidator(directory); const diagnosisValidator = createDiagnosisValidator(directory);
-    const identity = new WorkloadIdentityCredential();
-    this.cosmos = new CosmosClient({ endpoint, aadCredentials: identity });
-    this.bus = new ServiceBusClient(namespace, identity);
+    ({ cosmos: this.cosmos, bus: this.bus } = createWorkerClients(endpoint, namespace));
     this.receiver = this.bus.createReceiver(queue, { receiveMode: 'peekLock' });
     const receiver = this.receiver; const operations = this.cosmos.database(database).container(container);
     const reserve = new ReserveCommandConsumer(new CosmosReservationStore(operations), reserveValidator);

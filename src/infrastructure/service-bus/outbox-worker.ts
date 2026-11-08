@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { CosmosClient } from '@azure/cosmos';
-import { WorkloadIdentityCredential } from '@azure/identity';
+import { cosmosConfigured, createWorkerClients, serviceBusConfigured } from '../azure-clients';
 import { ServiceBusClient, ServiceBusSender } from '@azure/service-bus';
 import { CosmosOutboxDispatcher } from '../cosmos/outbox';
 import { ServiceBusEventPublisher } from './event-publisher';
@@ -25,15 +25,11 @@ export class ExecutionOutboxWorker implements OnModuleInit, OnApplicationShutdow
     const namespace = process.env.SERVICE_BUS_NAMESPACE;
     const topic = process.env.SERVICE_BUS_EVENT_TOPIC;
     const signingKey = process.env.EXECUTION_MESSAGE_PRIVATE_KEY;
-    if (!signingKey || !endpoint || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(endpoint) || !database || !container ||
-        !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) || !topic ||
-        !process.env.AZURE_TENANT_ID || !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) {
+    if (!signingKey || !cosmosConfigured(endpoint) || !database || !container || !serviceBusConfigured(namespace) || !topic) {
       throw new Error('Configuração incompleta do worker da outbox');
     }
     const signer = new MessageSigner(signingKey);
-    const identity = new WorkloadIdentityCredential();
-    this.cosmos = new CosmosClient({ endpoint, aadCredentials: identity });
-    this.bus = new ServiceBusClient(namespace, identity);
+    ({ cosmos: this.cosmos, bus: this.bus } = createWorkerClients(endpoint, namespace));
     this.sender = this.bus.createSender(topic);
     this.dispatcher = new CosmosOutboxDispatcher(this.cosmos.database(database).container(container), new ServiceBusEventPublisher(this.sender, signer));
     this.active = this.poll();
