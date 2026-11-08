@@ -1,165 +1,174 @@
-# Execution Service — Fase 4
+# soat-execution-service
 
-O CI prepara publicação e deploy em HML somente para `push` em `development`
-após qualidade do mesmo SHA. A variável de repositório `HML_DEPLOY_ENABLED`
-deve ser `true`; ausente ou diferente de `true`, nenhuma imagem é publicada e
-nenhum deploy ocorre. O ambiente `hml` deve fornecer OIDC (`AZURE_CLIENT_ID`,
-`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), nomes do AKS e
-`EXECUTION_WORKLOAD_CLIENT_ID`. O namespace precisa dos secrets
-`soat-ghcr-pull` e `soat-execution-runtime`, provisionados de forma segura pelo
-ambiente, por exemplo com sincronização do Key Vault. O fluxo ainda precisa de
-ensaio no cluster autorizado.
+**Execution Service** da Fase 4 do Sistema Integrado de Oficina. É responsável
+por catálogo técnico, estoque por filial, diagnóstico, reserva de peças, fila de
+execução e reparo, e comunica a finalização ao
+[OS Service](https://github.com/JoaoGW/soat-api) pela Saga orquestrada.
 
-Execution é responsável por catálogo, estoque, diagnóstico, fila e reparo. Seu
-Cosmos DB é exclusivo do serviço e as operações transacionais usam a partição
-da filial. O OS coordena uma **Saga orquestrada** por comandos e eventos
-assinados. Execution reserva peças após aprovação e só inicia o reparo após
-comando vinculado ao pagamento confirmado. Na compensação, confirma o
-cancelamento antes de qualquer liberação; se o trabalho físico começou, a
-ocorrência segue para reconciliação e não há rollback físico fictício.
-A orquestração no OS concentra prazos, decisões e a ordem das compensações,
-facilitando auditoria e retomada sem compartilhar o banco de execução.
+## Stack
+
+- Node.js 24, TypeScript e NestJS;
+- Azure Cosmos DB for NoSQL exclusivo do serviço, particionado por filial;
+- Azure Service Bus (comandos, eventos, inbox e outbox) com assinatura Ed25519;
+- Workload Identity, OpenTelemetry/New Relic, Jest, SonarJS, Docker,
+  Kustomize e kind.
+
+## Arquitetura
 
 ```mermaid
 flowchart LR
-  OS[OS: orquestrador] -->|comandos| Broker[Service Bus]
-  Broker --> Execution[Execution]
-  Execution --> Cosmos[(Cosmos DB)]
-  Execution -->|eventos| Broker
-  Broker --> OS
+  Equipe[Equipe técnica] -->|JWT administrativo| API[Execution HTTP]
+  OS[OS: orquestrador] -->|execution.commands| Bus[Service Bus]
+  Bus --> Worker[Execution workers]
+  API --> Cosmos[(Cosmos DB Execution)]
+  Worker --> Cosmos
+  Worker -->|eventos assinados| Topic[(topic soat.domain.events)]
+  Topic --> OS
 ```
 
-O [CI de Execution](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml)
-verifica 80% por métrica no serviço e, separadamente, na infraestrutura com
-`npm run test:coverage-infrastructure`; os relatórios são publicados como
-artefatos identificados pelo SHA da execução. O repositório é privado e exige
-permissão para consultar essas evidências.
-O CI executa `npm run quality:sonarjs` com regras selecionadas de lógica e
-segurança da SonarSource. Esse gate local não substitui todos os recursos do
-SonarQube nem seu painel.
+O banco NoSQL foi escolhido porque estoque, reservas, tarefas e diagnóstico são
+documentos lidos e alterados sempre dentro da mesma filial. A partição por filial
+permite batches transacionais com ETag para concorrência otimista, gravando
+estoque, reserva, operação, inbox e outbox atomicamente, e escala com o número
+de filiais da rede. Nenhum outro serviço acessa o Cosmos de Execution.
 
-Traces e métricas OpenTelemetry são opcionais: defina `OBSERVABILITY_ENABLED=true`
-e `NEW_RELIC_LICENSE_KEY` no secret do ambiente; `OTEL_SERVICE_VERSION` deve
-receber o SHA e `OTEL_EXPORTER_OTLP_ENDPOINT` pode apontar ao coletor HTTPS.
-A aplicação inicializa a instrumentação antes do Nest e encerra o SDK no
-shutdown. `npm run build && npm run test:observability-local` verifica a
-exportação para coletor local sem credenciais externas. A validação do trace
-distribuído no New Relic continua dependente do ambiente e da configuração.
+## Saga orquestrada
 
-`GET /execucoes/fila?filialId=...&limit=20` exige JWT administrativo e lista
-trabalhos `QUEUED` daquela filial em ordem de entrada, com no máximo 100 itens.
-A resposta inclui `continuationToken` para a próxima página; o cursor pertence
-à mesma filial. O teste `npm run test:cosmos-queue` exige
-`COSMOS_TEST_ENDPOINT=http://127.0.0.1:8081` e usa um banco temporário no
-emulador. Ele também consulta estoque e catálogo pelas rotas HTTP com JWT
-administrativo e valida as respostas contra o OpenAPI. A indexação do caminho
-`queueKey` é necessária no Cosmos real.
-A referência REST das rotas implementadas está em [docs/openapi.yaml](docs/openapi.yaml).
+O OS coordena uma **Saga orquestrada** por comandos e eventos assinados. A
+orquestração mantém em um único dono os prazos, a regra de pagamento antes do
+reparo e a ordem das compensações; Execution apenas executa comandos
+idempotentes e publica fatos, sem conhecer Billing.
 
-`GET /estoque/:filialId/:sku` consulta saldo, reservado e disponível; o
-`PUT` no mesmo caminho ajusta o saldo absoluto e exige JWT administrativo,
-`Idempotency-Key` e corpo `{"balance":10,"reason":"INVENTORY"}`. A peça
-precisa existir no catálogo da filial e o novo saldo não pode ser menor que a
-quantidade reservada. O ajuste, sua chave, motivo e ator são gravados em batch
-transacional; uma repetição retorna o resultado original sem reverter ajustes
-posteriores. O teste no emulador não substitui a validação de atomicidade e
-concorrência no Cosmos real.
+| Comando recebido | Eventos emitidos |
+| --- | --- |
+| `execution.request-diagnosis.v1` | diagnóstico pendente; `diagnosis-started` e `diagnosis-completed` (itens e preços fixados do catálogo) pelas rotas da equipe |
+| `execution.reserve-parts.v1` | `parts-reserved`, `parts-reservation-failed` |
+| `execution.enqueue-work.v1` | `work-enqueued`; depois `work-started` e `work-completed` pelas rotas da equipe |
+| `execution.cancel-work.v1` | `work-cancelled` (evidência de não início) |
+| `execution.release-parts.v1` | `parts-released` |
 
-O catálogo por filial oferece consulta individual, listagem paginada de itens
-ativos, gravação e desativação lógica. O diagnóstico continua usando o snapshot
-de preços já registrado, mesmo quando o catálogo muda depois da conclusão.
+Execution reserva peças após aprovação e só enfileira o reparo após comando
+vinculado ao pagamento confirmado. Na compensação, confirma o cancelamento antes
+de qualquer liberação: o cancelamento antes do início grava uma barreira
+durável; depois do início retorna `ALREADY_STARTED` e a ocorrência segue para
+reconciliação, sem rollback físico fictício. A liberação exige o cancelamento
+confirmado e nenhuma tarefa iniciada. Os schemas estão em
+[`docs/contracts/messages`](docs/contracts/messages).
 
-Tarefas enfileiradas por versões anteriores podem não ter `queueKey`. Antes de
-ativar a consulta em ambiente com dados existentes, execute por filial
-`QUEUE_BACKFILL_FILIAL=<filial> npm run ops:backfill-queue` com identidade e
-configuração Cosmos do workload. Sem argumentos o comando apenas inspeciona;
-`npm run ops:backfill-queue -- --apply` grava as chaves com ETag, sem alterar
-outros campos. Em conflito, reavalie e execute novamente. Tarefas antigas sem
-a chave não aparecem na listagem até esse procedimento.
+## API REST
 
-Serviço em desenvolvimento; ainda não está pronto para receber tráfego ou
-para deploy. As funções de domínio calculam reserva, consumo e liberação de
-estoque, agregando quantidades por SKU e limitando a reserva a 20 SKUs.
+A referência está em [`docs/openapi.yaml`](docs/openapi.yaml) e é validada por
+teste contra as rotas. Todas as rotas, exceto `/health`, exigem JWT
+administrativo HS256 do OS (`JWT_SECRET`, distinto de `JWT_CLIENT_SECRET`).
 
-O adapter de reserva prepara um batch transacional do Cosmos na partição da
-filial, com ETags para concorrência e gravação de estoque, reserva, operação,
-inbox e outbox. Repetições não duplicam a reserva. Existe um bloqueio durável
-para impedir reserva posterior ao cancelamento; esse bloqueio por si só não
-comprova que o trabalho físico não começou e não autoriza estorno ou liberação.
-O consumidor preparado valida o contrato, identifica mensagens inválidas para
-DLQ e confirma o processamento somente após a persistência. Prazo expirado
-e estoque insuficiente geram falhas duráveis com inbox e outbox; outras falhas
-seguem sujeitas a retry/DLQ. O worker precisa ser testado com Service Bus real.
+| Rota | Uso |
+| --- | --- |
+| `GET /execucoes/fila?filialId=&limit=` | Fila `QUEUED` da filial em ordem de entrada, paginada por `continuationToken` (máx. 100) |
+| `POST /execucoes/:osId/iniciar-diagnostico` e `/concluir-diagnostico` | Diagnóstico; a conclusão recebe `items` e fixa os preços do catálogo em centavos |
+| `POST /execucoes/:osId/iniciar` e `/finalizar` | Início (consome a reserva) e conclusão do reparo |
+| `GET` e `PUT /estoque/:filialId/:sku` | Saldo, reservado e disponível; ajuste absoluto auditado |
+| `GET`, `PUT` e `DELETE /catalogo/:filialId/:itemType/:sourceId` | Item do catálogo da filial e desativação lógica |
+| `GET /catalogo/:filialId/:itemType` | Listagem paginada de itens ativos |
 
-O enfileiramento prepara uma transação na mesma partição para conferir a
-reserva, disputar ETags com o bloqueio de cancelamento e gravar tarefa, inbox,
-operação e evento. A tarefa fica `QUEUED`; não inicia reparo nem consome peças.
-Os consumidores de reserva e enfileiramento estão ligados ao runtime,
-mas desativados por padrão. Outros comandos ainda não são suportados e podem
-chegar à DLQ após as tentativas; não habilitar até completar os handlers e
-validar o isolamento de produtores. Cancelamento concorrente e idempotência
-foram testados em simulação; a operação real ainda precisa de validação.
+As ações exigem `Idempotency-Key`; repetições retornam o resultado original.
 
-Os testes atuais usam uma simulação em memória e não comprovam o comportamento
-real de atomicidade, concorrência ou limites do Cosmos. Os workers de comandos e outbox estão conectados, mas desativados por padrão.
+## Configuração
 
-Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov` e
-`npm run test:contracts`.
+Copie `.env.example`. O acesso ao Cosmos usa exclusivamente Workload Identity
+(`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_FEDERATED_TOKEN_FILE`) com
+`COSMOS_ENDPOINT`, `COSMOS_DATABASE` e `COSMOS_CONTAINER`; sem essa
+configuração as rotas de dados respondem 503. Os workers ficam desativados por
+padrão:
 
-Pendentes: validar Cosmos e identidade com infraestrutura real, completar
-casos de reconciliação e o gate de qualidade, e comprovar deploy e observabilidade
-no ambiente de aceite. Os testes distribuídos locais usam emuladores.
+| Variável | Habilita |
+| --- | --- |
+| `ENABLE_EXECUTION_COMMANDS` | Consumidor da fila `SERVICE_BUS_COMMAND_QUEUE` |
+| `ENABLE_EXECUTION_OUTBOX` | Publicação da outbox no `SERVICE_BUS_EVENT_TOPIC`, com lease, ETag e cinco tentativas |
 
-O worker da outbox só inicia com `ENABLE_EXECUTION_OUTBOX=true` e exige
-`COSMOS_ENDPOINT`, `COSMOS_DATABASE`, `COSMOS_CONTAINER`,
-`SERVICE_BUS_NAMESPACE`, `SERVICE_BUS_EVENT_TOPIC` e as variáveis de identidade
-federada do Azure. As credenciais devem conceder acesso ao container Cosmos e
-publicação no topic. Ele usa lease e ETag, retenta cinco vezes e mantém eventos
-em `FAILED` para intervenção. A publicação é pelo menos uma vez: após falha de
-confirmação, o mesmo `messageId` pode ser enviado novamente. Nenhum serviço real
-é contatado se o worker estiver desativado; a integração real permanece pendente.
-O [procedimento de recuperação](docs/recuperacao-outbox.md) permite rearmar
-eventos próprios `FAILED`, com auditoria transacional na mesma partição.
+Ao habilitar os workers, configure `OS_MESSAGE_PUBLIC_KEY` e a chave privada
+exclusiva `EXECUTION_MESSAGE_PRIVATE_KEY`; comandos sem assinatura válida seguem
+à DLQ antes do processamento. A indexação do caminho `queueKey` é necessária no
+Cosmos. Tarefas de versões anteriores sem `queueKey` são corrigidas por filial
+com `QUEUE_BACKFILL_FILIAL=<filial> npm run ops:backfill-queue` (inspeção) e
+`-- --apply` (gravação com ETag).
 
-O consumidor exige `ENABLE_EXECUTION_COMMANDS=true`, a configuração do Cosmos,
-da fila Service Bus e a identidade de workload. A ligação real e o isolamento
-de produtores ainda não foram validados.
+## Execução e testes
 
-O adapter de reparo prepara início e conclusão com ETags, operação, inbox e
-outbox. O início consome a reserva de peças atomicamente. Cancelamento antes do
-início grava uma barreira; depois do início retorna `ALREADY_STARTED` e não
-reverte trabalho físico. A liberação exige a operação de cancelamento
-confirmada e nenhuma tarefa iniciada; não verifica a situação financeira, que
-continua sendo responsabilidade da Saga. Cancelamento e liberação têm
-consumidores preparados. Os testes de concorrência usam Cosmos simulado.
+Com Node 24:
 
-A solicitação de diagnóstico é recebida pelo worker e gravada como pendente,
-com inbox, idempotência e barreira de cancelamento na mesma partição. As rotas
-administrativas `POST /execucoes/:osId/iniciar-diagnostico`,
-`/concluir-diagnostico`, `/iniciar` e `/finalizar` exigem JWT administrativo
-HS256, expiração e `Idempotency-Key`. Recebem `sagaId`, `filialId` e,
-nas ações de reparo, `executionId`; a conclusão de diagnóstico recebe também
-`items` com `sourceId`, `itemType` e `quantity`. O servidor consulta o catálogo
-da filial e fixa os preços em centavos antes de publicar os eventos. As rotas
-`PUT` e `GET /catalogo/:filialId/:itemType/:sourceId` administram e consultam
-um item. Configurar `JWT_SECRET` com a chave administrativa do OS (mínimo de
-32 bytes), distinta de `JWT_CLIENT_SECRET`, e as variáveis de Cosmos e workload
-identity. A entrega desses segredos e os acessos precisam ser configurados
-antes do uso. O consumo dos eventos de diagnóstico e a geração do comando de
-orçamento foram preparados no OS; o fluxo distribuído ainda requer validação.
+```bash
+npm ci
+npm run lint
+npm run quality:sonarjs
+npm run build
+npm run test:cov
+npm run test:coverage-infrastructure
+npm run test:contracts
+```
 
-O transporte exige assinatura Ed25519 para autenticar o OS. Ao habilitar os
-workers, configure `OS_MESSAGE_PUBLIC_KEY` e a chave privada exclusiva de
-Execution em `EXECUTION_MESSAGE_PRIVATE_KEY`; eventos são assinados e comandos
-sem assinatura válida seguem à DLQ antes do processamento. Não compartilhe
-chaves privadas entre serviços. Distribuição e rotação das chaves ainda precisam
-ser configuradas e testadas no ambiente real.
+`npm run test:cosmos-queue` exige `COSMOS_TEST_ENDPOINT=http://127.0.0.1:8081`
+(emulador Cosmos) e usa um banco temporário: consulta fila, estoque e catálogo
+pelas rotas HTTP e valida as respostas contra o OpenAPI. O fluxo completo com os
+três serviços é o BDD distribuído do
+[OS](https://github.com/JoaoGW/soat-api#testes-cobertura-e-qualidade).
 
-## Dependência temporariamente sobrescrita
+### Evidência de cobertura
+
+Medição do [CI](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml) no commit `b60da54`, com gate mínimo de 80% em cada métrica:
+
+| Escopo | Statements | Branches | Functions | Lines |
+| --- | --- | --- | --- | --- |
+| Serviço | 89.28% | 83.98% | 94.00% | 95.16% |
+| Infraestrutura | 91.03% | 84.37% | 98.03% | 96.75% |
+
+Cada execução publica os totais do próprio SHA no resumo do job e como anotação (`scripts/quality/coverage-summary.cjs`) e anexa o relatório completo como artefato.
+
+`npm run quality:sonarjs` aplica regras selecionadas do analisador SonarJS
+(SonarSource) para lógica e segurança com `--max-warnings=0`; é o gate de
+qualidade similar ao SonarQube adotado no CI, sem o painel do SonarQube.
+
+## CI/CD e deploy
+
+O [CI](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml)
+roda em todo pull request e em push para `main` e `development`:
+
+1. **quality**: lint, SonarJS, build, observabilidade local, cobertura do
+   serviço e da infraestrutura (80% por métrica), contratos, imagem com a trava
+   da recuperação e manifests;
+2. **Deploy Kubernetes (kind)**: cria um cluster kind efêmero, carrega a imagem
+   do SHA e aplica o overlay
+   [`deploy/kustomize/overlays/kind`](deploy/kustomize/overlays/kind); valida
+   rollout, imagem, `/health`, rota sem token (401) e token administrativo
+   aceito com o acesso ao Cosmos fechado sem identidade Azure (503);
+3. **publish** e **deploy_hml**: em push para `development`, publicam no GHCR e
+   aplicam no AKS o mesmo SHA, somente com `HML_DEPLOY_ENABLED=true`.
+
+A `main` exige pull request e os checks. O deploy AKS usa OIDC
+(`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), nomes do AKS,
+`EXECUTION_WORKLOAD_CLIENT_ID` e os secrets `soat-ghcr-pull` e
+`soat-execution-runtime`. Enquanto a assinatura Azure estiver desativada, o
+ambiente kind é o deploy automatizado verificável.
+
+## Observabilidade
+
+Traces e métricas OpenTelemetry são exportados ao New Relic, como na Fase 3:
+`OBSERVABILITY_ENABLED=true`, `NEW_RELIC_LICENSE_KEY` no secret,
+`OTEL_SERVICE_VERSION` com o SHA e `OTEL_EXPORTER_OTLP_ENDPOINT` opcional. A
+instrumentação inicia antes do Nest, propaga o contexto W3C nas mensagens e é
+encerrada no shutdown. `npm run build && npm run test:observability-local`
+verifica a exportação para um coletor local.
+
+## Operação
+
+A publicação é pelo menos uma vez: após falha de confirmação, o mesmo
+`messageId` pode ser reenviado. Eventos que esgotam as tentativas ficam em
+`FAILED`; o [procedimento de recuperação](docs/recuperacao-outbox.md) rearma
+eventos próprios com auditoria transacional na mesma partição
+(`npm run ops:recover-outbox`, travado sem habilitação explícita).
+
+## Dependências
 
 O `package-lock.json` fixa Multer 2.5.0 por `overrides` para corrigir o aviso
-GHSA-q7qp-rjg7-q26m na versão transitiva fixada pelo Nest. O teste de
-compatibilidade exercita o interceptor HTTP do Nest com filtro assíncrono; ele
-não reproduz todas as condições do aviso. Remova o override quando uma versão
-compatível do Nest incorporar a correção e valide novamente build, testes e
-auditoria. A atualização para Nest 12 também exige adaptar o Jest a módulos ESM.
+GHSA-q7qp-rjg7-q26m na versão transitiva fixada pelo Nest; um teste exercita o
+interceptor HTTP com filtro assíncrono. Remova o override quando uma versão
+compatível do Nest incorporar a correção.
