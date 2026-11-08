@@ -21,6 +21,8 @@ jobs:
       - run: npm run test:observability-local
       - run: npm run test:cov -- --watchman=false
       - run: npm run test:coverage-infrastructure -- --watchman=false
+      - name: Publicar resumo de cobertura
+        run: node scripts/quality/coverage-summary.cjs coverage/coverage-summary.json Serviço coverage/infrastructure/coverage-summary.json Infraestrutura
       - run: npm run test:contracts
       - run: npm run test:delivery
       - name: Verificar imagem e trava da recuperação
@@ -36,9 +38,65 @@ jobs:
           name: execution-coverage-${{ github.sha }}
           path: coverage/
           if-no-files-found: error
+  deploy_kind:
+    name: Deploy Kubernetes (kind)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLUSTER: soat-execution
+      NAMESPACE: soat-kind
+      IMAGE: ghcr.io/joaogw/soat-execution-service:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagem do SHA avaliado
+        run: docker build -t "$IMAGE" .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+      - name: Carregar imagem e criar secret efêmero
+        run: |
+          kind load docker-image "$IMAGE" --name "$CLUSTER"
+          jwt_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$jwt_secret"
+          echo "JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          kubectl create namespace "$NAMESPACE"
+          kubectl -n "$NAMESPACE" create secret generic soat-execution-runtime \
+            --from-literal=JWT_SECRET="$jwt_secret" --from-literal=OTEL_SERVICE_VERSION="$GITHUB_SHA"
+      - name: Aplicar Deployment do SHA
+        run: |
+          kubectl kustomize deploy/kustomize/overlays/kind | sed "s/sha-not-set/$GITHUB_SHA/g" > "$RUNNER_TEMP/rendered.yaml"
+          if grep -q 'sha-not-set' "$RUNNER_TEMP/rendered.yaml"; then echo 'Manifesto incompleto'; exit 1; fi
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml"
+          kubectl -n "$NAMESPACE" rollout status deployment/soat-execution-service --timeout=180s
+      - name: Validar serviço implantado
+        run: |
+          deployed="$(kubectl -n "$NAMESPACE" get deployment soat-execution-service -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          [[ "$deployed" == "$IMAGE" ]] || { echo "Imagem inesperada: $deployed"; exit 1; }
+          kubectl -n "$NAMESPACE" port-forward service/soat-execution-service 18080:80 >/dev/null 2>&1 &
+          trap 'kill %1' EXIT
+          curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:18080/health
+          token="$(node -e 'const c=require("node:crypto");const b=o=>Buffer.from(JSON.stringify(o)).toString("base64url");const now=Math.floor(Date.now()/1e3);const h=b({alg:"HS256",typ:"JWT"});const p=b({sub:"admin-kind",role:"admin",iat:now,exp:now+300});process.stdout.write(h+"."+p+"."+c.createHmac("sha256",process.env.JWT_SECRET).update(h+"."+p).digest("base64url"))')"
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:18080/execucoes/fila?filialId=filial-kind')" == '401' ]]
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" 'http://127.0.0.1:18080/execucoes/fila?filialId=filial-kind')" == '503' ]]
+          {
+            echo '### Execution implantado no Kubernetes (kind)'
+            echo "- Imagem: \`$deployed\`"
+            echo '- `/health` 200 e rota administrativa sem token 401'
+            echo '- Token administrativo aceito; sem identidade Azure o acesso ao Cosmos permanece fechado (503)'
+            echo '```'
+            kubectl -n "$NAMESPACE" get deployments,pods,services -o wide
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnóstico do cluster
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all -o wide || true
+          kubectl -n "$NAMESPACE" describe pods || true
+          kubectl -n "$NAMESPACE" logs -l app=soat-execution-service --tail=200 || true
   publish:
     name: Publicar imagem Execution aprovada
-    needs: quality
+    needs: [quality, deploy_kind]
     if: github.event_name == 'push' && github.ref == 'refs/heads/development' && vars.HML_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
