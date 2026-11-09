@@ -2,6 +2,12 @@ import { reserve, settle } from './reserva';
 
 describe('reserva de estoque', () => {
   const stock = [{ sku: 'peca', balance: 5, reserved: 1 }];
+  it('permite reserva sem peças para serviço que não usa estoque', () => {
+    const result = reserve('os-1', [], []);
+    expect(result.reservation.items).toEqual([]);
+    expect(settle(result.reservation, [], 'CONSUME').reservation.status).toBe('CONSUMED');
+    expect(settle(result.reservation, [], 'RELEASE').reservation.status).toBe('RELEASED');
+  });
   it('agrega SKUs e reserva sem reduzir saldo físico', () => {
     const result = reserve('os-1', [{ sku: 'peca', quantity: 1 }, { sku: 'peca', quantity: 2 }], stock);
     expect(result.reservation.items).toEqual([{ sku: 'peca', quantity: 3 }]);

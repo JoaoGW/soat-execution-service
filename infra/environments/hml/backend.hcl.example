@@ -1,0 +1,5 @@
+resource_group_name  = "rg-do-state"
+storage_account_name = "contadestate"
+container_name       = "tfstate-execution"
+key                  = "execution-hml.tfstate"
+use_azuread_auth     = true

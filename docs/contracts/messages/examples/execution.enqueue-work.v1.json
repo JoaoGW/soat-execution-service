@@ -1,0 +1,26 @@
+{
+  "messageId": "message-001",
+  "type": "execution.enqueue-work.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2030-01-01T00:00:00Z",
+  "producer": "soat-os-service",
+  "aggregateType": "saga",
+  "aggregateId": "saga-001",
+  "aggregateVersion": 2,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "branch-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "quoteId": "quote-001",
+    "quoteVersion": 1,
+    "reservationId": "reservation-001",
+    "executionId": "execution-001",
+    "chargeId": "charge-001",
+    "paymentId": "payment-001",
+    "providerOrderId": "ORDAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "providerPaymentId": "payment-123"
+  }
+}

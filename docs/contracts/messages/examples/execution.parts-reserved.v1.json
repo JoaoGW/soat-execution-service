@@ -1,0 +1,17 @@
+{
+  "messageId": "message-001",
+  "type": "execution.parts-reserved.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-10-30T15:00:00Z",
+  "producer": "soat-execution-service",
+  "aggregateType": "reservation",
+  "aggregateId": "reservation-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": { "quoteId": "quote-001", "quoteVersion": 1, "reservationId": "reservation-001", "deadline": "2030-01-01T00:20:00Z", "items": [{ "sku": "part-001", "quantity": 1 }] }
+}

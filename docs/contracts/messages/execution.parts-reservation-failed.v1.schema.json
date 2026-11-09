@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.parts-reservation-failed.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "execution.parts-reservation-failed.v1"
+        },
+        "producer": {
+          "const": "soat-execution-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "quoteId",
+            "quoteVersion",
+            "reservationId",
+            "reason"
+          ],
+          "properties": {
+            "quoteId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteVersion": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "enum": [
+                "EXPIRED",
+                "INSUFFICIENT_STOCK"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

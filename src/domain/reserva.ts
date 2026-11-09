@@ -6,7 +6,7 @@ export type Reservation = { id: string; status: ReservationStatus; items: Line[]
 // These functions calculate a transition only. The caller must persist stock,
 // reservation, inbox and outbox in one Cosmos batch, with ETag preconditions.
 export function reserve(id: string, lines: Line[], stock: Stock[]): { reservation: Reservation; stock: Stock[] } {
-  if (!id || lines.length === 0) throw new Error('Reserva inválida');
+  if (!id) throw new Error('Reserva inválida');
   const quantities = new Map<string, number>();
   for (const line of lines) {
     if (!line.sku || !Number.isSafeInteger(line.quantity) || line.quantity <= 0) throw new Error('Item inválido');
