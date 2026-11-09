@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.work-enqueued.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "execution.work-enqueued.v1"
+        },
+        "producer": {
+          "const": "soat-execution-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "executionId",
+            "reservationId",
+            "quoteId",
+            "quoteVersion",
+            "chargeId",
+            "paymentId"
+          ],
+          "properties": {
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "chargeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paymentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteVersion": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  ]
+}

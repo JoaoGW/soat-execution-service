@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.work-completed.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "execution.work-completed.v1"
+        },
+        "producer": {
+          "const": "soat-execution-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "executionId",
+            "reservationId",
+            "startedAt",
+            "completedAt"
+          ],
+          "properties": {
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "startedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "completedAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

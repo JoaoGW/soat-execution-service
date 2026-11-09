@@ -14,6 +14,8 @@ spec:
         azure.workload.identity/use: "true"
     spec:
       serviceAccountName: soat-execution-service
+      imagePullSecrets:
+        - name: soat-ghcr-pull
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -26,6 +28,9 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: soat-execution-service
+          envFrom:
+            - secretRef:
+                name: soat-execution-runtime
           readinessProbe:
             httpGet:
               path: /health

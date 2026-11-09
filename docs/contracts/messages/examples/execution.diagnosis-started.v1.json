@@ -1,0 +1,20 @@
+{
+  "messageId": "msg-started",
+  "type": "execution.diagnosis-started.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-11-03T15:00:00Z",
+  "producer": "soat-execution-service",
+  "aggregateType": "diagnosis",
+  "aggregateId": "os-001",
+  "aggregateVersion": 2,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "corr-001",
+  "causationId": "op-started",
+  "operationId": "op-started",
+  "data": {
+    "diagnosisId": "os-001",
+    "diagnosisVersion": 2
+  }
+}

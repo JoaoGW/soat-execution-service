@@ -1,0 +1,22 @@
+{
+  "messageId": "message-001",
+  "type": "execution.parts-released.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2030-01-01T00:00:00Z",
+  "producer": "soat-execution-service",
+  "aggregateType": "stock-release",
+  "aggregateId": "aggregate-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "branch-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "reservationId": "reservation-001",
+    "cancelOperationId": "cancel-001",
+    "reason": "SAGA_COMPENSATION",
+    "outcome": "RELEASED"
+  }
+}

@@ -1,0 +1,216 @@
+openapi: 3.0.3
+info:
+  title: SOAT Execution
+  version: 1.0.0
+  description: Ações de diagnóstico, catálogo e reparo por filial. Rotas operacionais exigem JWT administrativo.
+paths:
+  /health:
+    get:
+      summary: Estado do processo
+      responses:
+        '200': { description: Processo disponível }
+  /execucoes/fila:
+    get:
+      summary: Listar tarefas em fila por ordem de entrada
+      security: [{ admin: [] }]
+      parameters:
+        - { name: filialId, in: query, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: continuationToken, in: query, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,512}$' } }
+      responses:
+        '200':
+          description: Página de tarefas, sem dados financeiros
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, continuationToken]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        osId: { type: string }
+                        sagaId: { type: string }
+                        executionId: { type: string }
+                        status: { type: string, enum: [QUEUED] }
+                        createdAt: { type: string, format: date-time }
+                  continuationToken: { type: string, nullable: true }
+        '400': { description: Parâmetros ou cursor inválidos }
+        '401': { description: JWT inválido }
+        '503': { description: Banco indisponível ou não configurado }
+  /execucoes/{osId}/iniciar:
+    post:
+      summary: Iniciar reparo e consumir a reserva
+      security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { $ref: '#/components/requestBodies/WorkAction' }
+      responses: { '201': { description: Resultado da operação }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+  /execucoes/{osId}/finalizar:
+    post:
+      summary: Concluir reparo iniciado
+      security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { $ref: '#/components/requestBodies/WorkAction' }
+      responses: { '201': { description: Resultado da operação }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+  /execucoes/{osId}/iniciar-diagnostico:
+    post:
+      summary: Iniciar diagnóstico solicitado pela Saga
+      security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { $ref: '#/components/requestBodies/DiagnosisAction' }
+      responses: { '201': { description: Diagnóstico iniciado }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+  /execucoes/{osId}/concluir-diagnostico:
+    post:
+      summary: Concluir diagnóstico com snapshot de preços do catálogo
+      security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/DiagnosisAction' }
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      minItems: 1
+                      maxItems: 20
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [sourceId, itemType, quantity]
+                        properties:
+                          sourceId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+                          itemType: { type: string, enum: [PART, SERVICE] }
+                          quantity: { type: integer, minimum: 1, maximum: 100000 }
+      responses: { '201': { description: Diagnóstico concluído }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+  /estoque/{filialId}/{sku}:
+    parameters:
+      - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+      - { name: sku, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+    get:
+      summary: Consultar saldo, reservado e disponível de uma peça na filial
+      security: [{ admin: [] }]
+      responses: { '200': { $ref: '#/components/responses/Stock' }, '400': { description: Identificador inválido }, '401': { description: JWT inválido }, '404': { description: Estoque inexistente }, '503': { description: Banco não configurado } }
+    put:
+      summary: Ajustar saldo absoluto sem reduzir abaixo das reservas
+      security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [balance, reason]
+              properties:
+                balance: { type: integer, minimum: 0, maximum: 2147483647 }
+                reason: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+      responses: { '200': { $ref: '#/components/responses/Stock' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Peça inexistente }, '409': { description: Reserva, chave ou concorrência conflitante }, '503': { description: Banco não configurado } }
+  /catalogo/{filialId}/{itemType}:
+    get:
+      summary: Listar itens ativos do catálogo da filial
+      security: [{ admin: [] }]
+      parameters:
+        - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+        - { name: itemType, in: path, required: true, schema: { type: string, enum: [PART, SERVICE] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: continuationToken, in: query, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,512}$' } }
+      responses: { '200': { $ref: '#/components/responses/CatalogPage' }, '400': { description: Parâmetros ou cursor inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+  /catalogo/{filialId}/{itemType}/{sourceId}:
+    parameters:
+      - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+      - { name: itemType, in: path, required: true, schema: { type: string, enum: [PART, SERVICE] } }
+      - { name: sourceId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+    get:
+      summary: Consultar item do catálogo da filial
+      security: [{ admin: [] }]
+      responses: { '200': { $ref: '#/components/responses/CatalogItem' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '503': { description: Banco não configurado } }
+    put:
+      summary: Criar ou atualizar item do catálogo da filial
+      security: [{ admin: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, unitPriceInCents, active]
+              properties:
+                name: { type: string, maxLength: 200 }
+                unitPriceInCents: { type: integer, minimum: 0, maximum: 2147483647 }
+                active: { type: boolean }
+      responses: { '200': { description: Item salvo }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+    delete:
+      summary: Desativar item sem apagar seu histórico
+      security: [{ admin: [] }]
+      responses: { '200': { description: Item desativado ou já inativo }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '503': { description: Banco não configurado } }
+components:
+  securitySchemes:
+    admin: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    OsId: { name: osId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+  schemas:
+    Stock:
+      type: object
+      required: [sku, filialId, balance, reserved, available]
+      properties:
+        sku: { type: string }
+        filialId: { type: string }
+        balance: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        available: { type: integer, minimum: 0 }
+    CatalogItem:
+      type: object
+      required: [sourceId, itemType, name, unitPriceInCents, active, version]
+      properties:
+        sourceId: { type: string }
+        itemType: { type: string, enum: [PART, SERVICE] }
+        name: { type: string }
+        unitPriceInCents: { type: integer, minimum: 0 }
+        active: { type: boolean }
+        version: { type: integer, minimum: 1 }
+    CatalogPage:
+      type: object
+      required: [items, continuationToken]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CatalogItem' } }
+        continuationToken: { type: string, nullable: true }
+    DiagnosisAction:
+      type: object
+      required: [sagaId, filialId]
+      properties:
+        sagaId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+        filialId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+        correlationId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+    WorkAction:
+      allOf:
+        - { $ref: '#/components/schemas/DiagnosisAction' }
+        - type: object
+          required: [executionId]
+          properties: { executionId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
+  requestBodies:
+    DiagnosisAction:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/DiagnosisAction' } } }
+    WorkAction:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/WorkAction' } } }
+  responses:
+    Stock:
+      description: Saldo atual, quantidade reservada e quantidade disponível.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Stock' } } }
+    CatalogItem:
+      description: Item versionado do catálogo.
+      content: { application/json: { schema: { $ref: '#/components/schemas/CatalogItem' } } }
+    CatalogPage:
+      description: Página de itens ativos e cursor para a próxima página, quando existir.
+      content: { application/json: { schema: { $ref: '#/components/schemas/CatalogPage' } } }

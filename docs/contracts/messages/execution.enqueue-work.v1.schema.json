@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.enqueue-work.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "execution.enqueue-work.v1"
+        },
+        "producer": {
+          "const": "soat-os-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "quoteId",
+            "quoteVersion",
+            "reservationId",
+            "executionId",
+            "chargeId",
+            "paymentId",
+            "providerOrderId",
+            "providerPaymentId"
+          ],
+          "properties": {
+            "quoteId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "chargeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paymentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteVersion": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "providerOrderId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "providerPaymentId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  ]
+}
