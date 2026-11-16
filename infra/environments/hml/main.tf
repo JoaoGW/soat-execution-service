@@ -54,10 +54,12 @@ resource "azurerm_cosmosdb_sql_container" "operations" {
 
 # Built-in Cosmos DB Data Contributor, scoped to the container; no master key
 # is distributed to the workload. The principal comes from the AKS identity.
+# O escopo do RBAC de dados do Cosmos usa o caminho lógico
+# `<account>/dbs/<db>/colls/<container>`, não o ID ARM do container.
 resource "azurerm_cosmosdb_sql_role_assignment" "runtime" {
   resource_group_name = var.resource_group_name
   account_name        = azurerm_cosmosdb_account.execution.name
   role_definition_id  = "${azurerm_cosmosdb_account.execution.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
   principal_id        = var.execution_workload_principal_id
-  scope               = azurerm_cosmosdb_sql_container.operations.id
+  scope               = "${azurerm_cosmosdb_account.execution.id}/dbs/${azurerm_cosmosdb_sql_database.execution.name}/colls/${azurerm_cosmosdb_sql_container.operations.name}"
 }

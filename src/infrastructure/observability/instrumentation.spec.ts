@@ -20,7 +20,7 @@ describe('observabilidade de Execution', () => {
     expect(() => startObservability({ OBSERVABILITY_ENABLED: 'true', NEW_RELIC_LICENSE_KEY: 'x', OTEL_EXPORTER_OTLP_ENDPOINT: 'invalid' })).toThrow('inválido');
     expect(NodeSDK).not.toHaveBeenCalled();
   });
-  it('configura serviço, exportação e ocultação de dados em HTTP e SQL', () => {
+  it('configura serviço, exportação e ocultação de dados HTTP, sem instrumentação de PostgreSQL', () => {
     const sdk = startObservability({ OBSERVABILITY_ENABLED: 'true', NEW_RELIC_LICENSE_KEY: 'test-key', OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.test/', OTEL_SERVICE_VERSION: 'sha-test', NODE_ENV: 'test' });
     expect(resourceFromAttributes).toHaveBeenCalledWith(expect.objectContaining({ 'service.name': 'soat-execution-service', 'service.version': 'sha-test' }));
     expect(OTLPTraceExporter).toHaveBeenCalledWith({ url: 'https://collector.test/v1/traces', headers: { 'api-key': 'test-key' } });
@@ -28,10 +28,8 @@ describe('observabilidade de Execution', () => {
     const options = jest.mocked(getNodeAutoInstrumentations).mock.calls[0][0] as unknown as Record<string, { requestHook: (span: { setAttribute: jest.Mock; updateName: jest.Mock }) => void }>;
     const span = { setAttribute: jest.fn(), updateName: jest.fn() };
     options['@opentelemetry/instrumentation-http'].requestHook(span);
-    options['@opentelemetry/instrumentation-pg'].requestHook(span);
     expect(span.setAttribute).toHaveBeenCalledWith('url.query', '[redacted]');
-    expect(span.setAttribute).toHaveBeenCalledWith('db.query.text', '[redacted]');
     expect(span.updateName).toHaveBeenCalledWith('HTTP request');
-    expect(span.updateName).toHaveBeenCalledWith('PostgreSQL query');
+    expect(options['@opentelemetry/instrumentation-pg']).toBeUndefined();
   });
 });

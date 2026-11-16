@@ -16,6 +16,8 @@ export class ExecutionOutboxWorker implements OnModuleInit, OnApplicationShutdow
   private timer?: NodeJS.Timeout;
   private active?: Promise<void>;
   private stopping = false;
+  static readonly batchSize = 20;
+  static readonly idleMs = 1000;
 
   onModuleInit(): void {
     if (process.env.ENABLE_EXECUTION_OUTBOX !== 'true') return;
@@ -35,11 +37,16 @@ export class ExecutionOutboxWorker implements OnModuleInit, OnApplicationShutdow
     this.active = this.poll();
   }
 
+  /**
+   * Drena a outbox em lotes de até `batchSize` (20) eventos: enquanto um lote inteiro é publicado, o próximo
+   * ciclo começa imediatamente; sem pendências (ou após falha) aguarda `idleMs` antes de consultar de novo.
+   */
   private async poll(): Promise<void> {
     if (this.stopping || !this.dispatcher) return;
-    try { await this.dispatcher.dispatchOne(); }
+    let full = false;
+    try { ({ full } = await this.dispatcher.dispatchBatch(ExecutionOutboxWorker.batchSize)); }
     catch { this.logger.error('Falha ao processar outbox'); }
-    if (!this.stopping) this.timer = setTimeout(() => { this.active = this.poll(); }, 1000);
+    if (!this.stopping) this.timer = setTimeout(() => { this.active = this.poll(); }, full ? 0 : ExecutionOutboxWorker.idleMs);
   }
 
   async onApplicationShutdown(): Promise<void> {

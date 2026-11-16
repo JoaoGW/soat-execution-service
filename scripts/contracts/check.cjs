@@ -32,3 +32,14 @@ for (const filename of fs.readdirSync(dir).filter((name) => name.endsWith('.v1.s
   assert.equal(contract({ ...fixture, data: {} }), false, `${name}: dados incompletos aceitos`);
   console.log(`${name}: exemplo e casos inválidos verificados.`);
 }
+const failed = require(path.join(dir, 'examples/execution.work-failed.v1.json'));
+const validateFailed = ajv.getSchema('https://soat.example/contracts/messages/execution.work-failed.v1.schema.json');
+for (const invalid of [
+  { ...failed, aggregateType: 'work-cancellation' },
+  { ...failed, data: { ...failed.data, reason: 'motivo com espaço' } },
+  { ...failed, data: { ...failed.data, failedAt: 'ontem' } },
+  { ...failed, data: { ...failed.data, refund: true } },
+]) {
+  assert.equal(validateFailed(invalid), false, 'execution.work-failed.v1: contrato inválido foi aceito');
+}
+console.log('execution.work-failed.v1: motivo, datas, agregado e campos extras verificados.');
