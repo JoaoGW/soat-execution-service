@@ -248,6 +248,13 @@ Service Bus) roda no workflow **Fluxo completo em Kubernetes** do
 (`deploy_hml`) permanece atrás da trava de custo `HML_DEPLOY_ENABLED`, porque a
 assinatura Azure está desativada.
 
+
+No kind, a telemetria do serviço vai ao OpenTelemetry Collector do cluster
+(`ALLOW_LOCAL_EMULATORS=true` permite HTTP e dispensa a chave), que alimenta
+Jaeger, Prometheus e Grafana sem custo e encaminha ao New Relic quando a chave
+existe. O workflow do soat-api confirma no Jaeger um único trace atravessando
+OS, Billing e Execution.
+
 ## Observabilidade
 
 Traces e métricas OpenTelemetry são exportados ao New Relic, como na Fase 3:
