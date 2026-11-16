@@ -1,0 +1,73 @@
+name: Infra Execution (Cosmos DB)
+
+on:
+  pull_request:
+    paths: ['infra/**', '.github/workflows/infra.yml']
+  push:
+    branches: [main, development]
+    paths: ['infra/**', '.github/workflows/infra.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/environments/hml
+
+jobs:
+  validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.8'
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive infra
+      - run: terraform -chdir="$TF_DIR" init -backend=false -input=false
+      - run: terraform -chdir="$TF_DIR" validate
+
+  apply_hml:
+    name: Apply HML
+    needs: validate
+    if: github.event_name != 'pull_request' && (github.ref_name == 'development' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: hml
+    concurrency:
+      group: execution-infra-hml
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trava de custo
+        if: vars.TF_APPLY_ENABLED != 'true' || vars.AZURE_CLIENT_ID == ''
+        run: |
+          echo '::notice::Apply bloqueado pela trava de custo (TF_APPLY_ENABLED != true ou sem identidade OIDC). Nenhum login no Azure foi tentado.'
+          echo '### Apply do Cosmos DB bloqueado pela trava de custo' >> "$GITHUB_STEP_SUMMARY"
+      - uses: hashicorp/setup-terraform@v3
+        if: vars.TF_APPLY_ENABLED == 'true' && vars.AZURE_CLIENT_ID != ''
+        with:
+          terraform_version: '1.9.8'
+          terraform_wrapper: false
+      - name: Aplicar Cosmos DB do Execution
+        if: vars.TF_APPLY_ENABLED == 'true' && vars.AZURE_CLIENT_ID != ''
+        env:
+          TF_VAR_resource_group_name: ${{ vars.EXECUTION_RESOURCE_GROUP }}
+          TF_VAR_cosmos_account_name: ${{ vars.EXECUTION_COSMOS_ACCOUNT }}
+          TF_VAR_execution_workload_principal_id: ${{ vars.EXECUTION_WORKLOAD_PRINCIPAL_ID }}
+        run: |
+          terraform -chdir="$TF_DIR" init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_EXECUTION_CONTAINER }}" \
+            -backend-config="key=execution-hml.tfstate" \
+            -backend-config="use_azuread_auth=true"
+          terraform -chdir="$TF_DIR" apply -input=false -auto-approve

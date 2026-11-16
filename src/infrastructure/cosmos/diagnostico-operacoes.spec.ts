@@ -100,6 +100,32 @@ describe('diagnóstico com snapshot', () => {
     await store.apply('start', input);
     await expect(store.apply('complete', { ...input, operationId: 'done', items: [{ sourceId: 'p1', itemType: 'PART', quantity: 1 }] })).rejects.toThrow('indisponível');
   });
+  it('registra a Idempotency-Key do catálogo no mesmo batch e recusa reutilização com outro conteúdo', async () => {
+    const item = { sourceId: 'p1', itemType: 'PART' as const, name: 'Peça', unitPriceInCents: 500, active: true };
+    await store.putCatalog('f1', item, 'put1');
+    await store.putCatalog('f1', { ...item, unitPriceInCents: 900 }, 'put2');
+    await store.putCatalog('f1', item, 'put1');
+    expect(await store.getCatalog('f1', 'PART', 'p1')).toMatchObject({ unitPriceInCents: 900, version: 2 });
+    expect(fake.get('operation:catalog-put:put1')).toBeDefined();
+    await expect(store.putCatalog('f1', { ...item, unitPriceInCents: 1 }, 'put1')).rejects.toMatchObject({ kind: 'CONFLICT', message: 'Chave de idempotência conflitante' });
+    await expect(store.putCatalog('f1', item, '../')).rejects.toMatchObject({ kind: 'INVALID_INPUT' });
+    expect(await store.deactivateCatalog('f1', 'PART', 'p1', 'del1')).toBe(true);
+    expect(await store.deactivateCatalog('f1', 'PART', 'p1', 'del1')).toBe(true);
+    expect(await store.deactivateCatalog('f1', 'PART', 'p1', 'del2')).toBe(true);
+    expect(fake.get('operation:catalog-deactivate:del2')).toBeDefined();
+    expect(await store.getCatalog('f1', 'PART', 'p1')).toMatchObject({ active: false, version: 3 });
+    await expect(store.deactivateCatalog('f1', 'SERVICE', 'p1', 'del1')).rejects.toThrow('Chave de idempotência conflitante');
+    expect(await store.deactivateCatalog('f1', 'PART', 'missing', 'del3')).toBe(false);
+    expect(fake.get('operation:catalog-deactivate:del3')).toBeUndefined();
+  });
+  it('classifica erros de diagnóstico como entrada inválida, conflito ou item indisponível', async () => {
+    await expect(store.apply('start', { ...input, osId: '../' })).rejects.toMatchObject({ kind: 'INVALID_INPUT' });
+    await expect(store.apply('complete', input)).rejects.toMatchObject({ kind: 'INVALID_INPUT', message: 'Itens inválidos' });
+    await expect(store.apply('complete', { ...input, items: [{ sourceId: 'p1', itemType: 'PART', quantity: 1 }, { sourceId: 'p1', itemType: 'PART', quantity: 2 }] })).rejects.toMatchObject({ kind: 'INVALID_INPUT', message: 'Itens duplicados' });
+    await expect(store.apply('complete', { ...input, items: [{ sourceId: 'p1', itemType: 'PART', quantity: 1 }] })).rejects.toMatchObject({ kind: 'CONFLICT' });
+    await store.apply('start', input);
+    await expect(store.apply('complete', { ...input, operationId: 'done', items: [{ sourceId: 'p1', itemType: 'PART', quantity: 1 }] })).rejects.toMatchObject({ kind: 'UNPROCESSABLE' });
+  });
 });
 
 describe('listagem do catálogo', () => {

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Container, ItemDefinition, OperationInput } from '@azure/cosmos';
+import { conflict, invalidInput, notFound } from '../../domain/erros';
 
 type Stock = ItemDefinition & { id: string; filialId: string; sku: string; balance: number; reserved: number };
 type Outcome = { sku: string; filialId: string; balance: number; reserved: number; available: number };
@@ -18,20 +19,20 @@ export class CosmosStockActions {
     return { sku: stock.sku, filialId: stock.filialId, balance: stock.balance, reserved: stock.reserved, available: stock.balance - stock.reserved };
   }
   async get(filialId: string, sku: string): Promise<Outcome | null> {
-    if (!idValid(filialId) || !idValid(sku)) throw new Error('Dados inválidos');
+    if (!idValid(filialId) || !idValid(sku)) throw invalidInput('Dados inválidos');
     const stock = await this.read<Stock>(`stock:${sku}`, filialId); return stock ? this.view(stock.value) : null;
   }
   async set(input: { filialId: string; sku: string; balance: number; operationId: string; actorId: string; reason: string }, now = new Date()): Promise<Outcome> {
-    if (![input.filialId, input.sku, input.operationId, input.reason].every(idValid) || typeof input.actorId !== 'string' || !/^[a-z0-9_@.-]{1,128}$/i.test(input.actorId) || !Number.isSafeInteger(input.balance) || input.balance < 0 || input.balance > 2147483647 || !Number.isFinite(now.getTime())) throw new Error('Dados inválidos');
+    if (![input.filialId, input.sku, input.operationId, input.reason].every(idValid) || typeof input.actorId !== 'string' || !/^[a-z0-9_@.-]{1,128}$/i.test(input.actorId) || !Number.isSafeInteger(input.balance) || input.balance < 0 || input.balance > 2147483647 || !Number.isFinite(now.getTime())) throw invalidInput('Dados inválidos');
     const hash = createHash('sha256').update(JSON.stringify({ filialId: input.filialId, sku: input.sku, balance: input.balance, actorId: input.actorId, reason: input.reason })).digest('hex');
     const ledgerId = `operation:stock-set:${input.operationId}`, stockId = `stock:${input.sku}`;
     for (let attempt = 0; attempt < 5; attempt++) {
       const prior = await this.read<Ledger>(ledgerId, input.filialId);
-      if (prior) { if (prior.value.hash !== hash) throw new Error('Chave de idempotência conflitante'); return prior.value.result; }
+      if (prior) { if (prior.value.hash !== hash) throw conflict('Chave de idempotência conflitante'); return prior.value.result; }
       const catalog = await this.read<ItemDefinition & { sourceId?: string; itemType?: string }>(`catalog:PART:${input.sku}`, input.filialId);
-      if (!catalog || catalog.value.sourceId !== input.sku || catalog.value.itemType !== 'PART') throw new Error('Peça não encontrada');
+      if (!catalog || catalog.value.sourceId !== input.sku || catalog.value.itemType !== 'PART') throw notFound('Peça não encontrada');
       const current = await this.read<Stock>(stockId, input.filialId); const reserved = current ? this.view(current.value).reserved : 0;
-      if (input.balance < reserved) throw new Error('Saldo menor que o reservado');
+      if (input.balance < reserved) throw conflict('Saldo menor que o reservado');
       const stock: Stock = { id: stockId, filialId: input.filialId, sku: input.sku, balance: input.balance, reserved };
       const result = this.view(stock);
       const ops: OperationInput[] = [current ? { operationType: 'Replace', id: stockId, ifMatch: current.etag, resourceBody: stock } : { operationType: 'Create', resourceBody: stock }, { operationType: 'Create', resourceBody: { id: ledgerId, filialId: input.filialId, hash, result, actorId: input.actorId, reason: input.reason, occurredAt: now.toISOString() } }];
@@ -42,6 +43,6 @@ export class CosmosStockActions {
         return result;
       } catch (error) { if (typeof error === 'object' && error !== null && 'code' in error && [409, 412].includes(Number(error.code))) continue; throw error; }
     }
-    throw new Error('Conflito de concorrência Cosmos');
+    throw conflict('Conflito de concorrência Cosmos');
   }
 }

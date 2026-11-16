@@ -15,7 +15,7 @@ import { EnqueueCommandConsumer, createEnqueueValidator } from './enqueue-consum
 import { MessageVerifier } from './message-signature';
 import { withMessageTrace } from '../observability/message-trace';
 
-/** Disabled by default; unsupported commands remain unacknowledged. */
+/** Disabled by default; unsupported commands are never completed and go to the DLQ (UnsupportedCommand). */
 @Injectable()
 export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(ExecutionCommandWorker.name);
@@ -54,9 +54,9 @@ export class ExecutionCommandWorker implements OnModuleInit, OnApplicationShutdo
         if (type === 'execution.cancel-work.v1') return cancel.process(message, receiver);
         if (type === 'execution.release-parts.v1') return release.process(message, receiver);
         if (type === 'execution.request-diagnosis.v1') return diagnosis.process(message, receiver);
-        // The broker may eventually send unsupported commands to the DLQ; do not claim success.
-        this.logger.warn('Comando ainda não suportado; permanecem necessárias outras etapas de Execution');
-        await receiver.abandonMessage(message);
+        // Tipo assinado pelo OS, mas fora dos comandos de Execution: não é confirmado e segue direto à DLQ para análise.
+        this.logger.warn('Comando não suportado por Execution; mensagem enviada à DLQ');
+        await receiver.deadLetterMessage(message, { deadLetterReason: 'UnsupportedCommand', deadLetterErrorDescription: 'Tipo de comando não suportado por Execution' });
         });
       },
       processError: async (args) => { this.logger.error(`Falha no transporte Service Bus: ${args.errorSource}`); },

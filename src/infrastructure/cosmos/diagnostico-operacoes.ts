@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Container, ItemDefinition, OperationInput } from '@azure/cosmos';
+import { conflict, invalidInput, unprocessable } from '../../domain/erros';
 
 type Doc = ItemDefinition & Record<string, unknown>;
 type Stored = { value: Doc; etag: string };
@@ -37,7 +38,7 @@ export class CosmosDiagnosisActions {
     }
   }
   async getCatalog(filialId: string, itemType: string, sourceId: string): Promise<(CatalogItem & { version: number }) | null> {
-    if (!idValid(filialId) || !idValid(sourceId) || !['PART', 'SERVICE'].includes(itemType)) throw new Error('Item inválido');
+    if (!idValid(filialId) || !idValid(sourceId) || !['PART', 'SERVICE'].includes(itemType)) throw invalidInput('Item inválido');
     const item = await this.read(`catalog:${itemType}:${sourceId}`, filialId);
     if (!item) return null;
     const value = item.value;
@@ -45,59 +46,72 @@ export class CosmosDiagnosisActions {
     return { sourceId, itemType: itemType as CatalogItem['itemType'], name: value.name, unitPriceInCents: value.unitPriceInCents as number, active: value.active, version: value.version as number };
   }
   async listCatalog(input: { filialId: string; itemType: string; limit: number; continuationToken?: string }) {
-    if (!idValid(input.filialId) || !['PART', 'SERVICE'].includes(input.itemType) || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100 || (input.continuationToken !== undefined && (typeof input.continuationToken !== 'string' || !/^[a-z0-9_-]{1,512}$/i.test(input.continuationToken)))) throw new Error('Consulta inválida');
+    if (!idValid(input.filialId) || !['PART', 'SERVICE'].includes(input.itemType) || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100 || (input.continuationToken !== undefined && (typeof input.continuationToken !== 'string' || !/^[a-z0-9_-]{1,512}$/i.test(input.continuationToken)))) throw invalidInput('Consulta inválida');
     let after = '';
     if (input.continuationToken) {
       try { const value: unknown = JSON.parse(Buffer.from(input.continuationToken, 'base64url').toString('utf8')); if (!value || typeof value !== 'object' || !('filialId' in value) || value.filialId !== input.filialId || !('itemType' in value) || value.itemType !== input.itemType || !('sourceId' in value) || !idValid(value.sourceId)) throw new Error(); after = value.sourceId; }
-      catch { throw new Error('Consulta inválida'); }
+      catch { throw invalidInput('Consulta inválida'); }
     }
     const page = await this.container.items.query<CatalogItem & { version: number }>({ query: 'SELECT TOP @take c.sourceId, c.itemType, c.name, c.unitPriceInCents, c.active, c.version FROM c WHERE c.filialId = @filialId AND STARTSWITH(c.id, @prefix) AND c.itemType = @itemType AND c.active = true AND c.sourceId > @after ORDER BY c.sourceId ASC', parameters: [{ name: '@take', value: input.limit + 1 }, { name: '@filialId', value: input.filialId }, { name: '@prefix', value: `catalog:${input.itemType}:` }, { name: '@itemType', value: input.itemType }, { name: '@after', value: after }] }, { partitionKey: input.filialId, maxItemCount: input.limit + 1 }).fetchAll();
     const items = page.resources.slice(0, input.limit);
     const continuationToken = page.resources.length > input.limit ? Buffer.from(JSON.stringify({ filialId: input.filialId, itemType: input.itemType, sourceId: items[items.length - 1].sourceId })).toString('base64url') : null;
     return { items, continuationToken };
   }
-  async deactivateCatalog(filialId: string, itemType: string, sourceId: string): Promise<boolean> {
-    if (!idValid(filialId) || !idValid(sourceId) || !['PART', 'SERVICE'].includes(itemType)) throw new Error('Item inválido');
+  /** Com `operationId` (Idempotency-Key HTTP), a chave fica registrada no mesmo batch e não pode ser reutilizada com outro item. */
+  private async idempotent(filialId: string, kind: string, operationId: string | undefined, hash: string): Promise<{ replay: boolean; ops: OperationInput[] }> {
+    if (operationId === undefined) return { replay: false, ops: [] };
+    if (!idValid(operationId)) throw invalidInput('Chave de idempotência inválida');
+    const ledgerId = `operation:${kind}:${operationId}`; const prior = await this.read(ledgerId, filialId);
+    if (prior && prior.value.hash !== hash) throw conflict('Chave de idempotência conflitante');
+    return { replay: Boolean(prior), ops: [{ operationType: 'Create', resourceBody: { id: ledgerId, filialId, hash } }] };
+  }
+  async deactivateCatalog(filialId: string, itemType: string, sourceId: string, operationId?: string): Promise<boolean> {
+    if (!idValid(filialId) || !idValid(sourceId) || !['PART', 'SERVICE'].includes(itemType)) throw invalidInput('Item inválido');
     const id = `catalog:${itemType}:${sourceId}`;
+    const hash = createHash('sha256').update(JSON.stringify({ action: 'catalog-deactivate', filialId, itemType, sourceId })).digest('hex');
     for (let attempt = 0; attempt < 5; attempt++) {
+      const ledger = await this.idempotent(filialId, 'catalog-deactivate', operationId, hash); if (ledger.replay) return true;
       const item = await this.read(id, filialId); if (!item) return false;
       if (item.value.sourceId !== sourceId || item.value.itemType !== itemType || typeof item.value.active !== 'boolean' || !Number.isSafeInteger(item.value.version) || Number(item.value.version) < 1) throw new Error('Item persistido inválido');
-      if (!item.value.active) return true;
+      if (!item.value.active && !ledger.ops.length) return true;
       const version = Number(item.value.version) + 1; if (!Number.isSafeInteger(version)) throw new Error('Versão inválida');
-      if (await this.commit([{ operationType: 'Replace', id, ifMatch: item.etag, resourceBody: { ...clean(item.value), active: false, version } }], filialId)) return true;
+      const ops: OperationInput[] = item.value.active ? [{ operationType: 'Replace', id, ifMatch: item.etag, resourceBody: { ...clean(item.value), active: false, version } }, ...ledger.ops] : ledger.ops;
+      if (await this.commit(ops, filialId)) return true;
     }
-    throw new Error('Conflito de concorrência Cosmos');
+    throw conflict('Conflito de concorrência Cosmos');
   }
-  async putCatalog(filialId: string, item: CatalogItem): Promise<void> {
-    if (!idValid(filialId) || !item || !idValid(item.sourceId) || !['PART', 'SERVICE'].includes(item.itemType) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || !Number.isSafeInteger(item.unitPriceInCents) || item.unitPriceInCents < 0 || item.unitPriceInCents > 2147483647 || typeof item.active !== 'boolean') throw new Error('Item inválido');
+  async putCatalog(filialId: string, item: CatalogItem, operationId?: string): Promise<void> {
+    if (!idValid(filialId) || !item || !idValid(item.sourceId) || !['PART', 'SERVICE'].includes(item.itemType) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || !Number.isSafeInteger(item.unitPriceInCents) || item.unitPriceInCents < 0 || item.unitPriceInCents > 2147483647 || typeof item.active !== 'boolean') throw invalidInput('Item inválido');
     const id = `catalog:${item.itemType}:${item.sourceId}`;
+    const hash = createHash('sha256').update(JSON.stringify({ action: 'catalog-put', filialId, sourceId: item.sourceId, itemType: item.itemType, name: item.name, unitPriceInCents: item.unitPriceInCents, active: item.active })).digest('hex');
     for (let attempt = 0; attempt < 5; attempt++) {
+      const ledger = await this.idempotent(filialId, 'catalog-put', operationId, hash); if (ledger.replay) return;
       const old = await this.read(id, filialId); const version = old ? Number(old.value.version) + 1 : 1;
       if (!Number.isSafeInteger(version) || version < 1) throw new Error('Versão inválida');
       const resourceBody = { id, filialId, sourceId: item.sourceId, itemType: item.itemType, name: item.name, unitPriceInCents: item.unitPriceInCents, active: item.active, version };
-      if (await this.commit([old ? { operationType: 'Replace', id, ifMatch: old.etag, resourceBody } : { operationType: 'Create', resourceBody }], filialId)) return;
+      if (await this.commit([old ? { operationType: 'Replace', id, ifMatch: old.etag, resourceBody } : { operationType: 'Create', resourceBody }, ...ledger.ops], filialId)) return;
     }
-    throw new Error('Conflito de concorrência Cosmos');
+    throw conflict('Conflito de concorrência Cosmos');
   }
   async apply(action: 'start' | 'complete', input: DiagnosisAction, now = new Date()): Promise<void> {
-    if (![input.osId, input.sagaId, input.filialId, input.operationId, input.correlationId].every(idValid) || !Number.isFinite(now.getTime())) throw new Error('Comando inválido');
-    if (action === 'complete' && (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 20 || input.items.some((item) => !item || !idValid(item.sourceId) || !['PART', 'SERVICE'].includes(item.itemType) || !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000))) throw new Error('Itens inválidos');
+    if (![input.osId, input.sagaId, input.filialId, input.operationId, input.correlationId].every(idValid) || !Number.isFinite(now.getTime())) throw invalidInput('Comando inválido');
+    if (action === 'complete' && (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 20 || input.items.some((item) => !item || !idValid(item.sourceId) || !['PART', 'SERVICE'].includes(item.itemType) || !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000))) throw invalidInput('Itens inválidos');
     const items = input.items ?? []; const keys = items.map((item) => `${item.itemType}:${item.sourceId}`);
-    if (new Set(keys).size !== keys.length) throw new Error('Itens duplicados');
+    if (new Set(keys).size !== keys.length) throw invalidInput('Itens duplicados');
     const hash = createHash('sha256').update(JSON.stringify({ action, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, items })).digest('hex');
     const opId = `operation:diagnosis-${action}:${input.operationId}`; const diagnosisId = `diagnosis:${input.osId}`; const gateId = `gate:${input.sagaId}`;
     for (let attempt = 0; attempt < 5; attempt++) {
       const previous = await this.read(opId, input.filialId);
-      if (previous) { if (previous.value.hash !== hash) throw new Error('Operação reutilizada com outro conteúdo'); return; }
+      if (previous) { if (previous.value.hash !== hash) throw conflict('Operação reutilizada com outro conteúdo'); return; }
       const gate = await this.read(gateId, input.filialId); const diagnosis = await this.read(diagnosisId, input.filialId);
-      if (!gate || gate.value.cancelled || !diagnosis || diagnosis.value.osId !== input.osId || diagnosis.value.sagaId !== input.sagaId || diagnosis.value.status !== (action === 'start' ? 'PENDING' : 'IN_PROGRESS')) throw new Error('Diagnóstico não pode avançar');
+      if (!gate || gate.value.cancelled || !diagnosis || diagnosis.value.osId !== input.osId || diagnosis.value.sagaId !== input.sagaId || diagnosis.value.status !== (action === 'start' ? 'PENDING' : 'IN_PROGRESS')) throw conflict('Diagnóstico não pode avançar');
       const version = Number(diagnosis.value.version) + 1;
       if (!Number.isSafeInteger(version) || version < 2) throw new Error('Versão inválida');
       const catalog = action === 'complete' ? await Promise.all(items.map((item) => this.read(`catalog:${item.itemType}:${item.sourceId}`, input.filialId))) : [];
-      if (catalog.some((item) => !item || item.value.active !== true || !Number.isSafeInteger(item.value.unitPriceInCents) || Number(item.value.unitPriceInCents) < 0)) throw new Error('Item de catálogo indisponível');
+      if (catalog.some((item) => !item || item.value.active !== true || !Number.isSafeInteger(item.value.unitPriceInCents) || Number(item.value.unitPriceInCents) < 0)) throw unprocessable('Item de catálogo indisponível');
       const snapshot = items.map((item, index) => ({ sourceId: item.sourceId, itemType: item.itemType, quantity: item.quantity, unitPriceInCents: Number(catalog[index]?.value.unitPriceInCents) }));
       const total = snapshot.reduce((sum, item) => sum + item.quantity * item.unitPriceInCents, 0);
-      if (snapshot.some((item) => !Number.isSafeInteger(item.quantity * item.unitPriceInCents)) || !Number.isSafeInteger(total) || total > 2147483647) throw new Error('Total inválido');
+      if (snapshot.some((item) => !Number.isSafeInteger(item.quantity * item.unitPriceInCents)) || !Number.isSafeInteger(total) || total > 2147483647) throw unprocessable('Total inválido');
       const messageId = randomUUID(); const type = `execution.diagnosis-${action === 'start' ? 'started' : 'completed'}.v1`;
       const event = { messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-execution-service', aggregateType: 'diagnosis', aggregateId: input.osId, aggregateVersion: version, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, correlationId: input.correlationId, causationId: input.operationId, operationId: input.operationId, ...(typeof diagnosis.value.traceparent === 'string' ? { traceparent: diagnosis.value.traceparent } : {}), ...(typeof diagnosis.value.tracestate === 'string' ? { tracestate: diagnosis.value.tracestate } : {}), data: { diagnosisId: input.osId, diagnosisVersion: version, ...(action === 'complete' ? { items: snapshot } : {}) } };
       const ops: OperationInput[] = [
@@ -109,6 +123,6 @@ export class CosmosDiagnosisActions {
       ];
       if (await this.commit(ops, input.filialId)) return;
     }
-    throw new Error('Conflito de concorrência Cosmos');
+    throw conflict('Conflito de concorrência Cosmos');
   }
 }
