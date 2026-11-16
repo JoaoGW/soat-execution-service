@@ -2,7 +2,11 @@ openapi: 3.0.3
 info:
   title: SOAT Execution
   version: 1.0.0
-  description: Ações de diagnóstico, catálogo e reparo por filial. Rotas operacionais exigem JWT administrativo.
+  description: >-
+    Ações de diagnóstico, catálogo e reparo por filial. Rotas operacionais exigem JWT administrativo.
+    Erros de regra de negócio respondem 409 (transição de estado inválida, execução divergente,
+    chave de idempotência reutilizada ou concorrência esgotada) ou 422 (item indisponível); 500 é
+    reservado a falhas inesperadas.
 paths:
   /health:
     get:
@@ -46,21 +50,40 @@ paths:
       security: [{ admin: [] }]
       parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { $ref: '#/components/requestBodies/WorkAction' }
-      responses: { '201': { description: Resultado da operação }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+      responses: { '201': { $ref: '#/components/responses/WorkResult' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
   /execucoes/{osId}/finalizar:
     post:
       summary: Concluir reparo iniciado
       security: [{ admin: [] }]
       parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { $ref: '#/components/requestBodies/WorkAction' }
-      responses: { '201': { description: Resultado da operação }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+      responses: { '201': { $ref: '#/components/responses/WorkResult' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
+  /execucoes/{osId}/falhar:
+    post:
+      summary: Registrar falha do reparo iniciado (execution.work-failed.v1)
+      description: >-
+        Exige tarefa STARTED. As peças já foram consumidas no início e não são devolvidas; o OS compensa
+        estornando o pagamento e cancelando a OS. Repetições com a mesma Idempotency-Key retornam FAILED.
+      security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/WorkAction' }
+                - type: object
+                  required: [reason]
+                  properties: { reason: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$', example: REPARO_INVIAVEL } }
+      responses: { '201': { $ref: '#/components/responses/WorkResult' }, '400': { description: Dados ou motivo inválidos }, '401': { description: JWT inválido }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
   /execucoes/{osId}/iniciar-diagnostico:
     post:
       summary: Iniciar diagnóstico solicitado pela Saga
       security: [{ admin: [] }]
       parameters: [{ $ref: '#/components/parameters/OsId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { $ref: '#/components/requestBodies/DiagnosisAction' }
-      responses: { '201': { description: Diagnóstico iniciado }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+      responses: { '201': { description: Diagnóstico iniciado }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
   /execucoes/{osId}/concluir-diagnostico:
     post:
       summary: Concluir diagnóstico com snapshot de preços do catálogo
@@ -88,7 +111,7 @@ paths:
                           sourceId: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
                           itemType: { type: string, enum: [PART, SERVICE] }
                           quantity: { type: integer, minimum: 1, maximum: 100000 }
-      responses: { '201': { description: Diagnóstico concluído }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+      responses: { '201': { description: Diagnóstico concluído }, '400': { description: Dados inválidos ou itens duplicados }, '401': { description: JWT inválido }, '409': { $ref: '#/components/responses/BusinessConflict' }, '422': { description: Item de catálogo indisponível ou total inválido }, '503': { description: Banco não configurado } }
   /estoque/{filialId}/{sku}:
     parameters:
       - { name: filialId, in: path, required: true, schema: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' } }
@@ -112,7 +135,7 @@ paths:
               properties:
                 balance: { type: integer, minimum: 0, maximum: 2147483647 }
                 reason: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
-      responses: { '200': { $ref: '#/components/responses/Stock' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Peça inexistente }, '409': { description: Reserva, chave ou concorrência conflitante }, '503': { description: Banco não configurado } }
+      responses: { '200': { $ref: '#/components/responses/Stock' }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Peça inexistente }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
   /catalogo/{filialId}/{itemType}:
     get:
       summary: Listar itens ativos do catálogo da filial
@@ -135,6 +158,7 @@ paths:
     put:
       summary: Criar ou atualizar item do catálogo da filial
       security: [{ admin: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
         content:
@@ -147,11 +171,12 @@ paths:
                 name: { type: string, maxLength: 200 }
                 unitPriceInCents: { type: integer, minimum: 0, maximum: 2147483647 }
                 active: { type: boolean }
-      responses: { '200': { description: Item salvo }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '503': { description: Banco não configurado } }
+      responses: { '200': { description: Item salvo }, '400': { description: Dados ou Idempotency-Key inválidos }, '401': { description: JWT inválido }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
     delete:
       summary: Desativar item sem apagar seu histórico
       security: [{ admin: [] }]
-      responses: { '200': { description: Item desativado ou já inativo }, '400': { description: Dados inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '503': { description: Banco não configurado } }
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Item desativado ou já inativo }, '400': { description: Dados ou Idempotency-Key inválidos }, '401': { description: JWT inválido }, '404': { description: Item inexistente }, '409': { $ref: '#/components/responses/BusinessConflict' }, '503': { description: Banco não configurado } }
 components:
   securitySchemes:
     admin: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -184,6 +209,13 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/CatalogItem' } }
         continuationToken: { type: string, nullable: true }
+    Error:
+      type: object
+      required: [statusCode, message]
+      properties:
+        statusCode: { type: integer }
+        message: { type: string, example: Trabalho não pode ser concluído }
+        error: { type: string, example: Conflict }
     DiagnosisAction:
       type: object
       required: [sagaId, filialId]
@@ -214,3 +246,14 @@ components:
     CatalogPage:
       description: Página de itens ativos e cursor para a próxima página, quando existir.
       content: { application/json: { schema: { $ref: '#/components/schemas/CatalogPage' } } }
+    WorkResult:
+      description: Resultado da operação (o mesmo em repetições com a mesma Idempotency-Key).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties: { status: { type: string, enum: [STARTED, COMPLETED, FAILED] } }
+    BusinessConflict:
+      description: Transição de estado inválida, execução divergente do comando, saldo abaixo do reservado, chave reutilizada com outro conteúdo ou concorrência esgotada.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

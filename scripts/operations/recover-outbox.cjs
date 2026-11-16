@@ -6,7 +6,7 @@ const { CosmosClient } = require('@azure/cosmos');
 const { WorkloadIdentityCredential } = require('@azure/identity');
 const { RecoverExecutionOutbox } = require('../../dist/infrastructure/cosmos/recover-outbox');
 
-const allowed = ['execution.diagnosis-started.v1', 'execution.diagnosis-completed.v1', 'execution.parts-reserved.v1', 'execution.parts-reservation-failed.v1', 'execution.parts-released.v1', 'execution.work-enqueued.v1', 'execution.work-started.v1', 'execution.work-completed.v1', 'execution.work-cancelled.v1'];
+const allowed = ['execution.diagnosis-started.v1', 'execution.diagnosis-completed.v1', 'execution.parts-reserved.v1', 'execution.parts-reservation-failed.v1', 'execution.parts-released.v1', 'execution.work-enqueued.v1', 'execution.work-started.v1', 'execution.work-completed.v1', 'execution.work-failed.v1', 'execution.work-cancelled.v1'];
 async function main() {
   const env = process.env;
   if (env.ENABLE_EXECUTION_OUTBOX_RECOVERY !== 'true' || !env.COSMOS_ENDPOINT || !/^https:\/\/[a-z0-9-]+\.documents\.azure\.com(?::443)?\/?$/i.test(env.COSMOS_ENDPOINT) || !env.COSMOS_DATABASE || !env.COSMOS_CONTAINER || !env.AZURE_TENANT_ID || !env.AZURE_CLIENT_ID || !env.AZURE_FEDERATED_TOKEN_FILE) throw new Error('Configuração incompleta');

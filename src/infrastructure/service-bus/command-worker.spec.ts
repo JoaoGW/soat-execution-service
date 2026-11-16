@@ -48,7 +48,7 @@ describe('ExecutionCommandWorker', () => {
     process.env.ENABLE_EXECUTION_COMMANDS = 'true'; delete process.env.COSMOS_ENDPOINT;
     expect(() => new ExecutionCommandWorker().onModuleInit()).toThrow('Configuração incompleta');
   });
-  it('roteia comandos conhecidos e não confirma tipo ainda não implementado', async () => {
+  it('roteia comandos conhecidos e envia tipo não suportado à DLQ sem confirmar', async () => {
     Object.assign(process.env, { ENABLE_EXECUTION_COMMANDS: 'true', COSMOS_ENDPOINT: 'https://example.documents.azure.com/', COSMOS_DATABASE: 'db', COSMOS_CONTAINER: 'operations', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'execution.commands', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     const worker = new ExecutionCommandWorker(); worker.onModuleInit();
     expect(WorkloadIdentityCredential).toHaveBeenCalledTimes(1);
@@ -61,7 +61,7 @@ describe('ExecutionCommandWorker', () => {
     forged.body.type = 'execution.release-parts.v1';
     await handlers.processMessage(forged);
     expect(receiver.deadLetterMessage).toHaveBeenCalledWith(forged, expect.objectContaining({ deadLetterReason: 'UnauthenticatedProducer' }));
-    expect(reserve.process).toHaveBeenCalledWith(a, receiver); expect(enqueue.process).toHaveBeenCalledWith(b, receiver); expect(diagnosis.process).toHaveBeenCalledWith(c, receiver); expect(receiver.abandonMessage).toHaveBeenCalledWith(unknown); expect(cancel.process).toHaveBeenCalledWith(d, receiver); expect(release.process).toHaveBeenCalledWith(e, receiver);
+    expect(reserve.process).toHaveBeenCalledWith(a, receiver); expect(enqueue.process).toHaveBeenCalledWith(b, receiver); expect(diagnosis.process).toHaveBeenCalledWith(c, receiver); expect(receiver.deadLetterMessage).toHaveBeenCalledWith(unknown, { deadLetterReason: 'UnsupportedCommand', deadLetterErrorDescription: 'Tipo de comando não suportado por Execution' }); expect(receiver.abandonMessage).not.toHaveBeenCalled(); expect(cancel.process).toHaveBeenCalledWith(d, receiver); expect(release.process).toHaveBeenCalledWith(e, receiver);
     await worker.onApplicationShutdown();
     expect(subscription.close).toHaveBeenCalled(); expect(receiver.close).toHaveBeenCalled(); expect(bus.close).toHaveBeenCalled(); expect(cosmos.dispose).toHaveBeenCalled();
   });

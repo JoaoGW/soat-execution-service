@@ -89,3 +89,68 @@ describe('CosmosOutboxDispatcher', () => {
     expect(publisher.publish).toHaveBeenCalledTimes(1);
   });
 });
+
+class FakeOutbox {
+  readonly docs = new Map<string, { doc: OutboxEvent; version: number }>();
+  readonly takes: number[] = [];
+  add(index: number, extra: Partial<OutboxEvent> = {}) {
+    const messageId = `m${index}`;
+    this.docs.set(`outbox:${messageId}`, { doc: { id: `outbox:${messageId}`, filialId: 'f1', messageId, status: 'PENDING', payload: { messageId }, createdAt: `2030-01-01T00:00:${String(index).padStart(2, '0')}Z`, ...extra }, version: 0 });
+  }
+  item(id: string) { return { read: async () => { const entry = this.docs.get(id); return entry ? { resource: { ...entry.doc }, etag: String(entry.version) } : { resource: undefined }; } }; }
+  items = {
+    query: (spec: { parameters: Array<{ name: string; value: number }> }) => ({ fetchAll: async () => {
+      const take = spec.parameters.find((parameter) => parameter.name === '@take')!.value; const now = spec.parameters.find((parameter) => parameter.name === '@now')!.value;
+      this.takes.push(take);
+      const eligible = [...this.docs.values()].map((entry) => entry.doc).filter((doc) => (doc.status === 'PENDING' && (doc.nextAttemptAt ?? 0) <= now) || (doc.status === 'PROCESSING' && (doc.leaseUntil ?? Infinity) <= now));
+      return { resources: eligible.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, take).map((doc) => ({ id: doc.id, filialId: doc.filialId })) };
+    } }),
+    batch: async (operations: OperationInput[]) => {
+      const op = operations[0]; if (op.operationType !== 'Replace') return { code: 400 };
+      const entry = this.docs.get(op.id); if (!entry || op.ifMatch !== String(entry.version)) return { code: 412 };
+      this.docs.set(op.id, { doc: { ...op.resourceBody } as OutboxEvent, version: entry.version + 1 });
+      return { code: 200, result: [{ statusCode: 200 }] };
+    },
+  };
+}
+
+describe('CosmosOutboxDispatcher em lote', () => {
+  let fake: FakeOutbox; const now = 10000;
+  const publisher = { publish: jest.fn() };
+  const dispatcher = () => new CosmosOutboxDispatcher(fake as unknown as Container, publisher, () => now, 1000, 2);
+  beforeEach(() => { fake = new FakeOutbox(); jest.resetAllMocks(); });
+  it('drena em ordem de criação até o limite e sinaliza lote completo', async () => {
+    for (const index of [3, 1, 2, 5, 4]) fake.add(index);
+    await expect(dispatcher().dispatchBatch(3)).resolves.toEqual({ sent: 3, full: true });
+    expect(publisher.publish.mock.calls.map(([event]) => event.messageId)).toEqual(['m1', 'm2', 'm3']);
+    await expect(dispatcher().dispatchBatch(3)).resolves.toEqual({ sent: 2, full: false });
+    expect(publisher.publish.mock.calls.map(([event]) => event.messageId)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
+    await expect(dispatcher().dispatchBatch()).resolves.toEqual({ sent: 0, full: false });
+    expect(fake.takes).toEqual([3, 3, 20]);
+    expect([...fake.docs.values()].every((entry) => entry.doc.status === 'SENT')).toBe(true);
+  });
+  it('interrompe o lote na primeira falha de publicação, reagendando sem adiantar os seguintes', async () => {
+    for (const index of [1, 2, 3]) fake.add(index);
+    publisher.publish.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('offline'));
+    await expect(dispatcher().dispatchBatch(3)).resolves.toEqual({ sent: 1, full: false });
+    expect(publisher.publish).toHaveBeenCalledTimes(2);
+    expect(fake.docs.get('outbox:m2')?.doc).toMatchObject({ status: 'PENDING', attempts: 1, nextAttemptAt: now + 1000 });
+    expect(fake.docs.get('outbox:m3')?.doc).toMatchObject({ status: 'PENDING' }); expect(fake.docs.get('outbox:m3')?.doc.attempts).toBeUndefined();
+  });
+  it('marca FAILED após o limite de tentativas e também encerra o lote', async () => {
+    fake.add(1, { attempts: 1 }); fake.add(2);
+    publisher.publish.mockRejectedValue(new Error('offline'));
+    await expect(dispatcher().dispatchBatch(5)).resolves.toEqual({ sent: 0, full: false });
+    expect(fake.docs.get('outbox:m1')?.doc.status).toBe('FAILED'); expect(publisher.publish).toHaveBeenCalledTimes(1);
+  });
+  it('ignora candidato com lease vigente ou removido e continua o lote', async () => {
+    fake.add(1); fake.add(2); fake.add(3);
+    const original = fake.item.bind(fake);
+    jest.spyOn(fake, 'item').mockImplementation((id: string) => id === 'outbox:m1' ? { read: async () => ({ resource: { ...fake.docs.get(id)!.doc, status: 'PROCESSING' as const, leaseUntil: now + 1 }, etag: '0' }) } : id === 'outbox:m2' ? { read: async () => { throw { code: 404 }; } } as never : original(id));
+    await expect(dispatcher().dispatchBatch(3)).resolves.toEqual({ sent: 1, full: false });
+    expect(publisher.publish).toHaveBeenCalledWith({ messageId: 'm3', payload: { messageId: 'm3' } });
+  });
+  it('recusa tamanho de lote inválido', async () => {
+    for (const limit of [0, 101, 1.5]) await expect(dispatcher().dispatchBatch(limit)).rejects.toThrow('Tamanho de lote inválido');
+  });
+});

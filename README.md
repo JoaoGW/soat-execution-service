@@ -32,6 +32,51 @@ permite batches transacionais com ETag para concorrência otimista, gravando
 estoque, reserva, operação, inbox e outbox atomicamente, e escala com o número
 de filiais da rede. Nenhum outro serviço acessa o Cosmos de Execution.
 
+### Participação na Saga
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant OS as OS (orquestrador)
+  participant Bus as Service Bus
+  participant EX as Execution
+  participant DB as Cosmos (partição da filial)
+  participant Eq as Equipe técnica (HTTP)
+  OS->>Bus: execution.reserve-parts.v1
+  Bus->>EX: comando assinado
+  EX->>DB: batch: reserva + estoque + inbox + outbox
+  EX-->>OS: parts-reserved | parts-reservation-failed
+  OS->>Bus: execution.enqueue-work.v1 (após pagamento confirmado)
+  Bus->>EX: comando assinado
+  EX->>DB: batch: tarefa QUEUED + outbox
+  EX-->>OS: work-enqueued
+  Eq->>EX: POST /execucoes/:osId/iniciar
+  EX->>DB: batch: tarefa STARTED + reserva CONSUMED + estoque + outbox
+  EX-->>OS: work-started
+  alt reparo concluído
+    Eq->>EX: POST /execucoes/:osId/finalizar
+    EX-->>OS: work-completed
+  else reparo inviável
+    Eq->>EX: POST /execucoes/:osId/falhar (reason)
+    EX->>DB: batch: tarefa FAILED + outbox (peças já consumidas)
+    EX-->>OS: work-failed (OS estorna o pagamento e cancela a OS)
+  end
+  opt compensação (cancelamento da OS)
+    OS->>Bus: execution.cancel-work.v1
+    Bus->>EX: comando assinado
+    EX->>DB: barreira de cancelamento (ou nenhuma alteração se já iniciado)
+    EX-->>OS: work-cancelled (CANCELLED | ALREADY_STARTED)
+    OS->>Bus: execution.release-parts.v1 (somente se CANCELLED)
+    Bus->>EX: comando assinado
+    EX->>DB: batch: reserva RELEASED + estoque + outbox
+    EX-->>OS: parts-released
+  end
+```
+
+Os eventos (setas tracejadas) são gravados na outbox no mesmo batch da mudança
+de estado e publicados de forma assíncrona, assinados, no tópico
+`soat.domain.events`.
+
 ## Saga orquestrada
 
 O OS coordena uma **Saga orquestrada** por comandos e eventos assinados. A
@@ -43,7 +88,7 @@ idempotentes e publica fatos, sem conhecer Billing.
 | --- | --- |
 | `execution.request-diagnosis.v1` | diagnóstico pendente; `diagnosis-started` e `diagnosis-completed` (itens e preços fixados do catálogo) pelas rotas da equipe |
 | `execution.reserve-parts.v1` | `parts-reserved`, `parts-reservation-failed` |
-| `execution.enqueue-work.v1` | `work-enqueued`; depois `work-started` e `work-completed` pelas rotas da equipe |
+| `execution.enqueue-work.v1` | `work-enqueued`; depois `work-started` e `work-completed` ou `work-failed` pelas rotas da equipe |
 | `execution.cancel-work.v1` | `work-cancelled` (evidência de não início) |
 | `execution.release-parts.v1` | `parts-released` |
 
@@ -54,6 +99,15 @@ durável; depois do início retorna `ALREADY_STARTED` e a ocorrência segue para
 reconciliação, sem rollback físico fictício. A liberação exige o cancelamento
 confirmado e nenhuma tarefa iniciada. Os schemas estão em
 [`docs/contracts/messages`](docs/contracts/messages).
+
+Se o reparo iniciado se mostrar inviável, a equipe registra a falha em
+`POST /execucoes/:osId/falhar`: a tarefa passa a `FAILED` e
+`execution.work-failed.v1` (executionId, reservationId, startedAt, failedAt e
+reason) é gravado na outbox no mesmo batch. As peças já foram consumidas no
+início e não são devolvidas; a compensação conduzida pelo OS é estornar o
+pagamento e cancelar a OS, e Billing aceita o evento como evidência do
+reembolso. Cancelamento posterior responde `ALREADY_STARTED`; iniciar ou concluir
+uma tarefa `FAILED` é recusado com 409.
 
 ## API REST
 
@@ -66,11 +120,18 @@ administrativo HS256 do OS (`JWT_SECRET`, distinto de `JWT_CLIENT_SECRET`).
 | `GET /execucoes/fila?filialId=&limit=` | Fila `QUEUED` da filial em ordem de entrada, paginada por `continuationToken` (máx. 100) |
 | `POST /execucoes/:osId/iniciar-diagnostico` e `/concluir-diagnostico` | Diagnóstico; a conclusão recebe `items` e fixa os preços do catálogo em centavos |
 | `POST /execucoes/:osId/iniciar` e `/finalizar` | Início (consome a reserva) e conclusão do reparo |
+| `POST /execucoes/:osId/falhar` | Falha do reparo iniciado, com `reason` (ex.: `REPARO_INVIAVEL`); publica `work-failed` |
 | `GET` e `PUT /estoque/:filialId/:sku` | Saldo, reservado e disponível; ajuste absoluto auditado |
 | `GET`, `PUT` e `DELETE /catalogo/:filialId/:itemType/:sourceId` | Item do catálogo da filial e desativação lógica |
 | `GET /catalogo/:filialId/:itemType` | Listagem paginada de itens ativos |
 
-As ações exigem `Idempotency-Key`; repetições retornam o resultado original.
+Todas as escritas (`POST`, `PUT` e `DELETE`, inclusive no catálogo) exigem
+`Idempotency-Key`; repetições retornam o resultado original e a mesma chave com
+outro conteúdo responde 409. Erros de regra de negócio são tipados
+(`BusinessError`) e traduzidos em 400 (entrada inválida), 404, 409 (transição de
+estado inválida, execução divergente do comando, saldo abaixo do reservado ou
+concorrência esgotada) e 422 (item de catálogo indisponível); 500 fica restrito
+a falhas inesperadas.
 
 ## Configuração
 
@@ -83,11 +144,12 @@ padrão:
 | Variável | Habilita |
 | --- | --- |
 | `ENABLE_EXECUTION_COMMANDS` | Consumidor da fila `SERVICE_BUS_COMMAND_QUEUE` |
-| `ENABLE_EXECUTION_OUTBOX` | Publicação da outbox no `SERVICE_BUS_EVENT_TOPIC`, com lease, ETag e cinco tentativas |
+| `ENABLE_EXECUTION_OUTBOX` | Publicação da outbox no `SERVICE_BUS_EVENT_TOPIC` em lotes de até 20 eventos (novo lote imediato enquanto o anterior sai completo; espera de 1 s quando ocioso ou após falha), com lease, ETag e cinco tentativas |
 
 Ao habilitar os workers, configure `OS_MESSAGE_PUBLIC_KEY` e a chave privada
 exclusiva `EXECUTION_MESSAGE_PRIVATE_KEY`; comandos sem assinatura válida seguem
-à DLQ antes do processamento. A indexação do caminho `queueKey` é necessária no
+à DLQ antes do processamento (`UnauthenticatedProducer`), e tipos assinados que
+Execution não trata seguem à DLQ com `UnsupportedCommand`. A indexação do caminho `queueKey` é necessária no
 Cosmos. Tarefas de versões anteriores sem `queueKey` são corrigidas por filial
 com `QUEUE_BACKFILL_FILIAL=<filial> npm run ops:backfill-queue` (inspeção) e
 `-- --apply` (gravação com ETag).
@@ -113,6 +175,7 @@ npm run build
 npm run test:cov
 npm run test:coverage-infrastructure
 npm run test:contracts
+npm run test:delivery
 ```
 
 `npm run test:cosmos-queue` exige `COSMOS_TEST_ENDPOINT=http://127.0.0.1:8081`
@@ -123,14 +186,21 @@ três serviços é o BDD distribuído do
 
 ### Evidência de cobertura
 
-Medição do [CI](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml) no commit `b60da54`, com gate mínimo de 80% em cada métrica:
+Gate mínimo de 80% em cada métrica. Medição local de `npm run test:cov` e
+`npm run test:coverage-infrastructure` na revisão que introduziu
+`execution.work-failed.v1`:
 
 | Escopo | Statements | Branches | Functions | Lines |
 | --- | --- | --- | --- | --- |
-| Serviço | 89.28% | 83.98% | 94.00% | 95.16% |
-| Infraestrutura | 91.03% | 84.37% | 98.03% | 96.75% |
+| Serviço | 93.28% | 86.90% | 99.15% | 97.71% |
+| Infraestrutura | 92.44% | 85.77% | 98.80% | 97.22% |
 
-Cada execução publica os totais do próprio SHA no resumo do job e como anotação (`scripts/quality/coverage-summary.cjs`) e anexa o relatório completo como artefato.
+Os números oficiais de cada commit ficam no job **quality** do
+[CI](https://github.com/JoaoGW/soat-execution-service/actions/workflows/ci.yml),
+passo **Publicar resumo de cobertura** (resumo do job e anotação gerados por
+`scripts/quality/coverage-summary.cjs`), e o relatório completo é anexado como o
+artefato `execution-coverage-<sha>`. A evolução fica no
+[painel do SonarCloud](https://sonarcloud.io/dashboard?id=JoaoGW_soat-execution-service).
 
 A qualidade é verificada no **SonarQube Cloud**
 ([painel do projeto](https://sonarcloud.io/project/overview?id=JoaoGW_soat-execution-service)): o CI
@@ -164,6 +234,26 @@ A `main` exige pull request e os checks. O deploy AKS usa OIDC
 `EXECUTION_WORKLOAD_CLIENT_ID` e os secrets `soat-ghcr-pull` e
 `soat-execution-runtime`. Enquanto a assinatura Azure estiver desativada, o
 ambiente kind é o deploy automatizado verificável.
+
+## Ambiente Kubernetes
+
+O deploy automatizado verificável roda em um cluster **kind** efêmero criado no
+próprio CI (job **Deploy Kubernetes (kind)**) em todo pull request e push: a
+imagem do SHA é carregada no cluster, o overlay
+[`deploy/kustomize/overlays/kind`](deploy/kustomize/overlays/kind) é aplicado e
+o job valida rollout, imagem, `/health` e autorização das rotas. O fluxo
+distribuído completo (OS, Billing e Execution com os emuladores de Cosmos DB e
+Service Bus) roda no workflow **Fluxo completo em Kubernetes** do
+[soat-api](https://github.com/JoaoGW/soat-api/actions). O deploy no AKS
+(`deploy_hml`) permanece atrás da trava de custo `HML_DEPLOY_ENABLED`, porque a
+assinatura Azure está desativada.
+
+
+No kind, a telemetria do serviço vai ao OpenTelemetry Collector do cluster
+(`ALLOW_LOCAL_EMULATORS=true` permite HTTP e dispensa a chave), que alimenta
+Jaeger, Prometheus e Grafana sem custo e encaminha ao New Relic quando a chave
+existe. O workflow do soat-api confirma no Jaeger um único trace atravessando
+OS, Billing e Execution.
 
 ## Observabilidade
 

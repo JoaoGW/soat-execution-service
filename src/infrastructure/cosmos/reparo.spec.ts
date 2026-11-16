@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CosmosWorkStore, WorkAction } from './reparo';
 import { CosmosEnqueueStore } from './enfileirar';
+import { BusinessError } from '../../domain/erros';
 
 class FakeCosmos {
   private readonly documents = new Map<string, { value: Record<string, unknown>; etag: string }>();
@@ -76,6 +77,46 @@ describe('CosmosWorkStore', () => {
     await expect(store.complete({ ...base, messageId: 'finish', operationId: 'finish' }, new Date('2030-01-01T01:00:00Z'))).resolves.toBe('COMPLETED');
     expect(fake.get('task:os1')).toMatchObject({ status: 'COMPLETED', version: 3 });
     for (const row of fake.list('outbox:')) expect(eventValid(row.payload as Record<string, unknown>)).toBe(true);
+  });
+  it('registra falha do reparo iniciado com evento válido, sem devolver peças, e bloqueia novas transições', async () => {
+    await expect(store.start(base, now)).resolves.toBe('STARTED');
+    const failure = { ...base, messageId: 'fail', operationId: 'fail', reason: 'REPARO_INVIAVEL' }; const later = new Date('2030-01-01T02:00:00Z');
+    await expect(store.fail(failure, later)).resolves.toBe('FAILED');
+    expect(fake.get('task:os1')).toMatchObject({ status: 'FAILED', version: 3, failedAt: later.toISOString(), failureReason: 'REPARO_INVIAVEL' });
+    expect(fake.get('stock:p1')).toMatchObject({ balance: 8, reserved: 0 }); expect(fake.get('reservation:os1')).toMatchObject({ status: 'CONSUMED' });
+    const event = fake.list('outbox:').map((row) => row.payload as Record<string, unknown>).find((payload) => payload.type === 'execution.work-failed.v1');
+    expect(event).toMatchObject({ aggregateType: 'execution', aggregateId: 'e1', aggregateVersion: 3, operationId: 'fail', causationId: 'fail', data: { executionId: 'e1', reservationId: 'r1', startedAt: now.toISOString(), failedAt: later.toISOString(), reason: 'REPARO_INVIAVEL' } });
+    expect(eventValid(event as Record<string, unknown>)).toBe(true);
+    await expect(store.fail({ ...failure, messageId: 'fail-retry' }, later)).resolves.toBe('FAILED');
+    expect(fake.get('inbox:fail:fail-retry')).toBeDefined();
+    await expect(store.fail({ ...failure, messageId: 'fail-other', reason: 'OUTRO' }, later)).rejects.toThrow('Operação reutilizada');
+    expect(fake.list('outbox:').filter((row) => (row.payload as Record<string, unknown>).type === 'execution.work-failed.v1')).toHaveLength(1);
+    await expect(store.cancel({ ...base, messageId: 'cancel', operationId: 'cancel' }, later)).resolves.toBe('ALREADY_STARTED');
+    await expect(store.complete({ ...base, messageId: 'finish', operationId: 'finish' }, later)).rejects.toThrow('não pode ser concluído');
+    await expect(store.start({ ...base, messageId: 'again', operationId: 'again' }, later)).rejects.toThrow('não pode ser iniciado');
+    await expect(store.fail({ ...failure, messageId: 'fail2', operationId: 'fail2' }, later)).rejects.toThrow('marcado como falho');
+    await expect(store.release({ ...base, messageId: 'release', operationId: 'release', reservationId: 'r1', cancelOperationId: 'cancel' }, later)).rejects.toThrow('Cancelamento sem confirmação');
+    expect(fake.get('task:os1')).toMatchObject({ status: 'FAILED', version: 3 });
+  });
+  it('recusa falha antes do início, sem motivo válido ou de outra execução, com erros de negócio tipados', async () => {
+    const failure = { ...base, messageId: 'fail', operationId: 'fail', reason: 'REPARO_INVIAVEL' };
+    await expect(store.fail(failure, now)).rejects.toMatchObject({ kind: 'CONFLICT', message: 'Trabalho não pode ser marcado como falho' });
+    await expect(store.fail({ ...failure, reason: 'com espaço' }, now)).rejects.toMatchObject({ kind: 'INVALID_INPUT', message: 'Comando inválido' });
+    await expect(store.fail({ ...failure, executionId: undefined }, now)).rejects.toThrow('Comando inválido');
+    await store.start(base, now);
+    await expect(store.fail({ ...failure, executionId: 'other' }, now)).rejects.toMatchObject({ kind: 'CONFLICT', message: 'Execução não corresponde ao comando' });
+    await expect(store.fail(failure, new Date('2029-12-31T23:00:00Z'))).rejects.toThrow('marcado como falho');
+    await expect(store.complete({ ...base, messageId: 'x', operationId: 'x' }, new Date('2029-12-31T23:00:00Z'))).rejects.toBeInstanceOf(BusinessError);
+    expect(fake.get('task:os1')).toMatchObject({ status: 'STARTED' });
+  });
+  it('trata estado desconhecido no cancelamento como erro inesperado', async () => {
+    fake.seed({ id: 'task:os1', filialId: 'f1', osId: 'os1', sagaId: 's1', executionId: 'e1', reservationId: 'r1', status: 'UNKNOWN', version: 1 });
+    const error = await store.cancel(base, now).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error); expect(error).not.toBeInstanceOf(BusinessError); expect((error as Error).message).toBe('Estado de execução inválido');
+  });
+  it('esgota tentativas sob concorrência com erro de conflito tipado', async () => {
+    fake.conflicts = 5;
+    await expect(store.start(base, now)).rejects.toMatchObject({ kind: 'CONFLICT', message: 'Conflito de concorrência Cosmos' });
   });
   it('cancelamento anterior impede início e não devolve estoque sozinho', async () => {
     await expect(store.cancel(base, now)).resolves.toBe('CANCELLED');
