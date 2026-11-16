@@ -1,0 +1,534 @@
+{
+  "info": {
+    "_postman_id": "578c0b28-db60-4d19-865f-a64f8f78ddd8",
+    "name": "SOAT Fase 4 — Execution Service",
+    "description": "Diagnóstico, catálogo, estoque, fila de execução e reparo. Os pedidos de diagnóstico, reserva e enfileiramento chegam pela Saga (fila execution.commands); a equipe usa estas rotas com JWT administrativo. A collection completa da jornada está em JoaoGW/soat-api (docs/postman/fase4-microsservicos.postman_collection.json).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "executionBaseUrl",
+      "value": "http://localhost:3003"
+    },
+    {
+      "key": "executionToken",
+      "value": ""
+    },
+    {
+      "key": "filialId",
+      "value": "filial-001"
+    },
+    {
+      "key": "osId",
+      "value": ""
+    },
+    {
+      "key": "sagaId",
+      "value": ""
+    },
+    {
+      "key": "sku",
+      "value": "peca-001"
+    },
+    {
+      "key": "executionId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "3. Execution — estoque e diagnóstico",
+      "item": [
+        {
+          "name": "Ajustar estoque da peça",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/estoque/{{filialId}}/{{sku}}",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "estoque",
+                "{{filialId}}",
+                "{{sku}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"balance\": 10,\n  \"reason\": \"CARGA_INICIAL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Fila de execução da filial",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{executionBaseUrl}}/execucoes/fila?filialId={{filialId}}",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "execucoes",
+                "fila"
+              ],
+              "query": [
+                {
+                  "key": "filialId",
+                  "value": "{{filialId}}"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const item = (json.items || []).find((entry) => entry.osId === pm.collectionVariables.get('osId'));",
+                  "if (item && item.executionId) pm.collectionVariables.set('executionId', item.executionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Iniciar diagnóstico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/execucoes/{{osId}}/iniciar-diagnostico",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "execucoes",
+                "{{osId}}",
+                "iniciar-diagnostico"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{sagaId}}\",\n  \"filialId\": \"{{filialId}}\",\n  \"correlationId\": \"{{sagaId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Concluir diagnóstico (gera orçamento no Billing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/execucoes/{{osId}}/concluir-diagnostico",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "execucoes",
+                "{{osId}}",
+                "concluir-diagnostico"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{sagaId}}\",\n  \"filialId\": \"{{filialId}}\",\n  \"correlationId\": \"{{sagaId}}\",\n  \"items\": [\n    {\n      \"sourceId\": \"{{sku}}\",\n      \"itemType\": \"PART\",\n      \"quantity\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Execution — reparo",
+      "item": [
+        {
+          "name": "Iniciar reparo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/execucoes/{{osId}}/iniciar",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "execucoes",
+                "{{osId}}",
+                "iniciar"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{sagaId}}\",\n  \"filialId\": \"{{filialId}}\",\n  \"correlationId\": \"{{sagaId}}\",\n  \"executionId\": \"{{executionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Finalizar reparo (comunica o OS)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/execucoes/{{osId}}/finalizar",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "execucoes",
+                "{{osId}}",
+                "finalizar"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{sagaId}}\",\n  \"filialId\": \"{{filialId}}\",\n  \"correlationId\": \"{{sagaId}}\",\n  \"executionId\": \"{{executionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Registrar falha no reparo — estorno e OS cancelada",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/execucoes/{{osId}}/falhar",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "execucoes",
+                "{{osId}}",
+                "falhar"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{sagaId}}\",\n  \"filialId\": \"{{filialId}}\",\n  \"correlationId\": \"{{sagaId}}\",\n  \"reason\": \"REPARO_INVIAVEL\",\n  \"executionId\": \"{{executionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Antes de iniciar, rode \"Fila de execução da filial\" (pasta 3) depois do pagamento para capturar o executionId da OS."
+    },
+    {
+      "name": "Catálogo e estoque",
+      "item": [
+        {
+          "name": "Cadastrar/atualizar peça no catálogo",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{executionBaseUrl}}/catalogo/{{filialId}}/PART/{{sku}}",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "catalogo",
+                "{{filialId}}",
+                "PART",
+                "{{sku}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Pastilha de freio\",\n  \"unitPriceInCents\": 500,\n  \"active\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Consultar peça do catálogo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{executionBaseUrl}}/catalogo/{{filialId}}/PART/{{sku}}",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "catalogo",
+                "{{filialId}}",
+                "PART",
+                "{{sku}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Listar catálogo de peças",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{executionBaseUrl}}/catalogo/{{filialId}}/PART",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "catalogo",
+                "{{filialId}}",
+                "PART"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Consultar estoque",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{executionBaseUrl}}/estoque/{{filialId}}/{{sku}}",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "estoque",
+                "{{filialId}}",
+                "{{sku}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{executionToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Execution /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{executionBaseUrl}}/health",
+              "host": [
+                "{{executionBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

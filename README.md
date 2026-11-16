@@ -111,7 +111,7 @@ uma tarefa `FAILED` é recusado com 409.
 
 ## API REST
 
-A referência está em [`docs/openapi.yaml`](docs/openapi.yaml) e é validada por
+A referência (Swagger/OpenAPI 3) está em [`docs/openapi.yaml`](docs/openapi.yaml) e a collection Postman do serviço em [`docs/postman/execution-service.postman_collection.json`](docs/postman/execution-service.postman_collection.json); a jornada completa pelos três serviços está na collection `docs/postman/fase4-microsservicos.postman_collection.json` do soat-api. O arquivo OpenAPI pode ser aberto no Swagger Editor ou importado no Postman e é validada por
 teste contra as rotas. Todas as rotas, exceto `/health`, exigem JWT
 administrativo HS256 do OS (`JWT_SECRET`, distinto de `JWT_CLIENT_SECRET`).
 
