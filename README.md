@@ -278,3 +278,5 @@ O `package-lock.json` fixa Multer 2.5.0 por `overrides` para corrigir o aviso
 GHSA-q7qp-rjg7-q26m na versão transitiva fixada pelo Nest; um teste exercita o
 interceptor HTTP com filtro assíncrono. Remova o override quando uma versão
 compatível do Nest incorporar a correção.
+
+<!-- demonstração do pipeline: vídeo da Fase 4 -->
